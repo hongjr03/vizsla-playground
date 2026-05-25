@@ -89,6 +89,18 @@ export const vizslaLabStyles: CSSResultGroup = [
       grid-template-rows: auto 1fr;
     }
 
+    .monaco-editor .reference-zone-widget .messages,
+    .monaco-editor .reference-zone-widget .ref-tree,
+    .monaco-editor .reference-zone-widget .ref-tree .monaco-list,
+    .monaco-editor .reference-zone-widget .reference,
+    .monaco-editor .reference-zone-widget .referenceMatch,
+    .monaco-editor .reference-zone-widget .monaco-icon-label,
+    .monaco-editor .reference-zone-widget .monaco-icon-label .label-name,
+    .monaco-editor .reference-zone-widget .monaco-icon-label .label-description,
+    .monaco-editor .reference-zone-widget .count {
+      font-size: 12px;
+    }
+
     .workspace-row {
       min-height: 36px;
       display: grid;
