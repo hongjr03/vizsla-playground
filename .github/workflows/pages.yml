@@ -52,7 +52,7 @@ jobs:
             pages-${{ runner.os }}-
 
       - name: Set up Rust nightly
-        run: rustup toolchain install nightly --profile minimal
+        run: rustup toolchain install nightly --profile minimal --component rustfmt
 
       - name: Install Ninja
         run: |
