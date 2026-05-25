@@ -11,15 +11,13 @@ import {
   entryFile,
   isSourceFile,
   languageIdForPath,
-  pathFromWorkspaceUri,
   scenarioWorkspaceFiles,
   sourceFiles,
   workspaceUri,
   type LabFileState,
 } from "../lab/workspace";
-import { drawWaveform } from "../lab/waveform";
 import { getScenario, SCENARIOS } from "../scenarios";
-import type { LabDiagnostic, LspTraceEntry, VizslaScenario, WorkerStatus } from "../types";
+import type { LabDiagnostic, VizslaScenario, WorkerStatus } from "../types";
 
 const DIAGNOSTIC_DEBOUNCE_MS = 260;
 
@@ -49,12 +47,10 @@ export class VizslaLabElement extends LitElement {
   private activeScenario: VizslaScenario = getScenario("counter");
   private activeUri = workspaceUri(entryFile(this.activeScenario).path);
   private diagnosticsByUri = new Map<string, LabDiagnostic[]>();
-  private trace: LspTraceEntry[] = [];
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
-  private activeTab = "diagnostics";
+  private inspectorOpen = false;
   private diagnosticsBusy = false;
   private cursor = "1:1";
-  private resizeObserver?: ResizeObserver;
   private diagnosticTimer: number | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
@@ -74,8 +70,6 @@ export class VizslaLabElement extends LitElement {
     this.style.setProperty("--vzlab-height", this.height || (this.docs ? "620px" : "min(860px, calc(100vh - 28px))"));
     this.mountEditor();
     this.restartClient();
-    this.observeWaveform();
-    this.refreshWaveform();
   }
 
   protected updated(changed: PropertyValues<this>): void {
@@ -86,8 +80,6 @@ export class VizslaLabElement extends LitElement {
     if (changed.has("scenario") && this.editor) {
       this.setScenario(getScenario(this.scenario));
     }
-
-    this.refreshWaveform();
   }
 
   disconnectedCallback(): void {
@@ -98,7 +90,6 @@ export class VizslaLabElement extends LitElement {
     this.editor?.dispose();
     this.disposeModels();
     this.client?.dispose();
-    this.resizeObserver?.disconnect();
   }
 
   protected render(): TemplateResult {
@@ -108,9 +99,8 @@ export class VizslaLabElement extends LitElement {
         activeScenario: this.activeScenario,
         activeUri: this.activeUri,
         diagnosticsByUri: this.diagnosticsByUri,
-        trace: this.trace,
         status: this.status,
-        activeTab: this.activeTab,
+        inspectorOpen: this.inspectorOpen,
         diagnosticsBusy: this.diagnosticsBusy,
         cursor: this.cursor,
       },
@@ -121,7 +111,8 @@ export class VizslaLabElement extends LitElement {
         copySource: () => void this.copySource(),
         activateFile: (uri) => this.activateFile(uri),
         revealDiagnostic: (diagnostic) => this.revealDiagnostic(diagnostic),
-        activateTab: (tab) => this.activateTab(tab),
+        toggleDiagnostics: () => this.toggleDiagnostics(),
+        closeInspector: () => this.closeInspector(),
       },
     );
   }
@@ -175,7 +166,7 @@ export class VizslaLabElement extends LitElement {
     );
 
     void wireVizslaVscodeLanguage(this.editor, this.vscodeAssetsUrl).catch((error: unknown) => {
-      this.pushTrace("server", "grammar/load", error instanceof Error ? error.message : "Failed to load VS Code grammar assets.");
+      console.warn(error instanceof Error ? error.message : "Failed to load VS Code grammar assets.");
     });
   }
 
@@ -213,7 +204,7 @@ export class VizslaLabElement extends LitElement {
           return await client.request(method, params);
         } catch (error) {
           if (client === this.client) {
-            this.pushTrace("server", method, error instanceof Error ? error.message : "LSP request failed.");
+            console.warn(error instanceof Error ? error.message : "LSP request failed.");
           }
           return null;
         }
@@ -260,18 +251,12 @@ export class VizslaLabElement extends LitElement {
       }
       this.scheduleDiagnostics(this.sourceUris(), false);
     };
-    client.onTrace = (entry) => {
-      if (generation !== this.clientGeneration || client !== this.client) {
-        return;
-      }
-      this.trace = [entry, ...this.trace].slice(0, 52);
-      this.requestUpdate();
-    };
     client.onLog = (message, level) => {
       if (generation !== this.clientGeneration || client !== this.client) {
         return;
       }
-      this.pushTrace("server", level === "error" ? "worker/error" : "worker/log", message);
+      const logger = level === "error" ? console.error : level === "warn" ? console.warn : console.info;
+      logger(message);
     };
     client.start(scenarioWorkspaceFiles(this.activeScenario));
   }
@@ -333,7 +318,7 @@ export class VizslaLabElement extends LitElement {
         this.applyMarkers(uri);
       }
     } catch (error) {
-      this.pushTrace("server", "textDocument/diagnostic", error instanceof Error ? error.message : "Diagnostics failed.");
+      console.error(error instanceof Error ? error.message : "Diagnostics failed.");
     } finally {
       if (generation === this.diagnosticGeneration) {
         this.diagnosticsBusy = false;
@@ -359,7 +344,6 @@ export class VizslaLabElement extends LitElement {
       this.scenario = scenario.id;
     }
     this.diagnosticsByUri.clear();
-    this.trace = [];
     this.createModels(scenario);
     this.editor?.setModel(this.activeFileState()?.model ?? null);
     this.editor?.updateOptions({ readOnly: this.activeFileState()?.file.editable === false });
@@ -411,7 +395,6 @@ export class VizslaLabElement extends LitElement {
 
   private async copySource(): Promise<void> {
     await navigator.clipboard.writeText(this.activeFileState()?.model.getValue() ?? "");
-    this.pushTrace("client", "clipboard/writeText", pathFromWorkspaceUri(this.activeUri));
   }
 
   private onScenarioChange(event: Event): void {
@@ -419,8 +402,13 @@ export class VizslaLabElement extends LitElement {
     this.setScenario(getScenario(select.value));
   }
 
-  private activateTab(tab: string): void {
-    this.activeTab = tab;
+  private toggleDiagnostics(): void {
+    this.inspectorOpen = !this.inspectorOpen;
+    this.requestUpdate();
+  }
+
+  private closeInspector(): void {
+    this.inspectorOpen = false;
     this.requestUpdate();
   }
 
@@ -465,27 +453,6 @@ export class VizslaLabElement extends LitElement {
       state.model.dispose();
     }
     this.fileStates.clear();
-  }
-
-  private observeWaveform(): void {
-    const canvas = this.renderRoot.querySelector<HTMLCanvasElement>(".waveform");
-    if (!canvas) {
-      return;
-    }
-    this.resizeObserver = new ResizeObserver(() => this.refreshWaveform());
-    this.resizeObserver.observe(canvas);
-  }
-
-  private refreshWaveform(): void {
-    const canvas = this.renderRoot.querySelector<HTMLCanvasElement>(".waveform");
-    if (canvas) {
-      drawWaveform(canvas, this.status.ready);
-    }
-  }
-
-  private pushTrace(direction: "client" | "server", method: string, detail: string): void {
-    this.trace = [{ id: Date.now(), direction, method, detail }, ...this.trace].slice(0, 52);
-    this.requestUpdate();
   }
 }
 
