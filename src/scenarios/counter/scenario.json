@@ -1,0 +1,20 @@
+{
+  "id": "counter",
+  "order": 10,
+  "label": "Counter",
+  "entryFile": "rtl/counter.sv",
+  "description": "Configured workspace with RTL and a small testbench.",
+  "files": [
+    {
+      "path": "vizsla.toml",
+      "languageId": "toml",
+      "editable": false
+    },
+    {
+      "path": "rtl/counter.sv"
+    },
+    {
+      "path": "tb/counter_tb.sv"
+    }
+  ]
+}

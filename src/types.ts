@@ -1,5 +1,3 @@
-export type VizslaScenarioId = "counter" | "syntax-error" | "bad-port" | "macro-guard";
-
 export interface VizslaScenarioFile {
   path: string;
   source: string;
@@ -8,7 +6,7 @@ export interface VizslaScenarioFile {
 }
 
 export interface VizslaScenario {
-  id: VizslaScenarioId;
+  id: string;
   label: string;
   entryFile: string;
   description: string;

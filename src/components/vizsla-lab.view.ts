@@ -12,7 +12,6 @@ interface VizslaLabViewState {
   status: WorkerStatus;
   inspectorOpen: boolean;
   diagnosticsBusy: boolean;
-  cursor: string;
 }
 
 interface VizslaLabViewActions {
@@ -69,7 +68,6 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
                 <span class="status-dot"></span>
                 <strong>${state.status.ready ? "Ready" : "Starting"}</strong>
               </div>
-              <div class="cursor" title="Cursor position">${state.cursor}</div>
               <button type="button" @click=${actions.resetScenario} title="Reset workspace">${icon(FileCode2)}</button>
               <button type="button" @click=${actions.copySource} title="Copy current file">${icon(ClipboardCopy)}</button>
             </div>

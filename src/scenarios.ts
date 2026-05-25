@@ -1,148 +1,79 @@
 import type { VizslaScenario } from "./types";
 
-const RTL_MANIFEST = `sources = ["rtl/**"]
-`;
+type ScenarioFileDefinition = Omit<VizslaScenario["files"][number], "source">;
 
-const RTL_TB_MANIFEST = `sources = ["rtl/**", "tb/**"]
-`;
+interface ScenarioDefinition {
+  id: string;
+  order: number;
+  label: string;
+  entryFile: string;
+  description: string;
+  files: ScenarioFileDefinition[];
+}
 
-const RTL_WITH_INCLUDES_MANIFEST = `sources = ["rtl/**"]
-include_dirs = ["include"]
-`;
+const scenarioDefinitions = import.meta.glob("./scenarios/*/scenario.json", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+}) as Record<string, string>;
 
-export const SCENARIOS: VizslaScenario[] = [
-  {
-    id: "counter",
-    label: "Counter Workspace",
-    entryFile: "rtl/counter.sv",
-    description: "Configured workspace with RTL and a small testbench.",
-    files: [
-      {
-        path: "vizsla_config.toml",
-        languageId: "toml",
-        editable: false,
-        source: RTL_TB_MANIFEST,
-      },
-      {
-        path: "rtl/counter.sv",
-        source: `module counter #(
-  parameter int WIDTH = 8
-) (
-  input  logic clk,
-  input  logic rst_n,
-  output logic [WIDTH-1:0] value
-);
+const scenarioSources = import.meta.glob("./scenarios/**/*", {
+  eager: true,
+  import: "default",
+  query: "?raw",
+}) as Record<string, string>;
 
-  always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) begin
-      value <= '0;
-    end else begin
-      value <= value + 1'b1;
-    end
-  end
-endmodule
-`,
-      },
-      {
-        path: "tb/counter_tb.sv",
-        source: `module counter_tb;
-  logic clk;
-  logic rst_n;
-  logic [7:0] value;
+function normalizeScenarioPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "");
+}
 
-  counter dut (
-    .clk(clk),
-    .rst_n(rst_n),
-    .value(value)
-  );
-endmodule
-`,
-      },
-    ],
-  },
-  {
-    id: "syntax-error",
-    label: "Syntax Diagnostic",
-    entryFile: "rtl/broken.sv",
-    description: "Configured workspace with a parse error that always produces a diagnostic.",
-    files: [
-      {
-        path: "vizsla_config.toml",
-        languageId: "toml",
-        editable: false,
-        source: RTL_MANIFEST,
-      },
-      {
-        path: "rtl/broken.sv",
-        source: `module broken(;
-endmodule
-`,
-      },
-    ],
-  },
-  {
-    id: "bad-port",
-    label: "Port Mismatch",
-    entryFile: "rtl/top.sv",
-    description: "Multi-file semantic diagnostic from a configured source root.",
-    files: [
-      {
-        path: "vizsla_config.toml",
-        languageId: "toml",
-        editable: false,
-        source: RTL_MANIFEST,
-      },
-      {
-        path: "rtl/child.sv",
-        source: `module child(input logic a, input logic b);
-endmodule
-`,
-      },
-      {
-        path: "rtl/top.sv",
-        source: `module top;
-  logic sig;
+function scenarioDirectory(metadataPath: string): string {
+  const match = /^\.\/scenarios\/([^/]+)\/scenario\.json$/.exec(metadataPath);
+  if (match === null) {
+    throw new Error(`Unexpected scenario metadata path: ${metadataPath}`);
+  }
 
-  child u(.a(sig));
-endmodule
-`,
-      },
-    ],
-  },
-  {
-    id: "macro-guard",
-    label: "Macro Include",
-    entryFile: "rtl/feature_gate.sv",
-    description: "Include directory and macro flow for docs embeds.",
-    files: [
-      {
-        path: "vizsla_config.toml",
-        languageId: "toml",
-        editable: false,
-        source: RTL_WITH_INCLUDES_MANIFEST,
-      },
-      {
-        path: "include/feature_defs.svh",
-        source: "`define VIZSLA_LAB_ENABLE\n",
-      },
-      {
-        path: "rtl/feature_gate.sv",
-        source: `\`include "feature_defs.svh"
+  return match[1];
+}
 
-module feature_gate(input logic clk, output logic pulse);
-\`ifdef VIZSLA_LAB_ENABLE
-  always_ff @(posedge clk) begin
-    pulse <= ~pulse;
-  end
-\`else
-  assign pulse = 1'b0;
-\`endif
-endmodule
-`,
-      },
-    ],
-  },
-];
+function scenarioDefinition(metadataPath: string, rawDefinition: string): ScenarioDefinition {
+  const directory = scenarioDirectory(metadataPath);
+  const definition = JSON.parse(rawDefinition) as ScenarioDefinition;
+  if (definition.id !== directory) {
+    throw new Error(`Scenario metadata id mismatch: expected ${directory}, found ${definition.id}`);
+  }
+
+  return definition;
+}
+
+function scenarioSource(id: string, path: string): string {
+  const key = `./scenarios/${id}/${normalizeScenarioPath(path)}`;
+  const source = scenarioSources[key];
+  if (source === undefined) {
+    throw new Error(`Missing scenario source: ${key}`);
+  }
+
+  return source;
+}
+
+function loadScenario(definition: ScenarioDefinition): VizslaScenario {
+  return {
+    id: definition.id,
+    label: definition.label,
+    entryFile: normalizeScenarioPath(definition.entryFile),
+    description: definition.description,
+    files: definition.files.map((file) => ({
+      ...file,
+      path: normalizeScenarioPath(file.path),
+      source: scenarioSource(definition.id, file.path),
+    })),
+  };
+}
+
+export const SCENARIOS: VizslaScenario[] = Object.entries(scenarioDefinitions)
+  .map(([metadataPath, rawDefinition]) => scenarioDefinition(metadataPath, rawDefinition))
+  .sort((left, right) => left.order - right.order || left.label.localeCompare(right.label))
+  .map(loadScenario);
 
 export function getScenario(id: string | null | undefined): VizslaScenario {
   return SCENARIOS.find((scenario) => scenario.id === id) ?? SCENARIOS[0];

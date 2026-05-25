@@ -153,10 +153,10 @@ export const vizslaLabStyles: CSSResultGroup = [
       white-space: nowrap;
     }
 
-    select,
-    button,
+    .toolbar select,
+    .toolbar button,
+    .drawer-header button,
     .status,
-    .cursor,
     .diagnostic span {
       font:
         500 11px/1 "Cascadia Code",
@@ -164,7 +164,7 @@ export const vizslaLabStyles: CSSResultGroup = [
         monospace;
     }
 
-    select {
+    .toolbar select {
       height: 28px;
       min-width: 138px;
       color: var(--vzlab-accent);
@@ -174,7 +174,8 @@ export const vizslaLabStyles: CSSResultGroup = [
       padding: 0 24px 0 8px;
     }
 
-    button {
+    .toolbar button,
+    .drawer-header button {
       height: 28px;
       min-width: 28px;
       display: inline-flex;
@@ -193,24 +194,28 @@ export const vizslaLabStyles: CSSResultGroup = [
         transform 140ms ease;
     }
 
-    button:hover,
-    button:focus-visible,
-    select:focus-visible {
+    .toolbar button:hover,
+    .toolbar button:focus-visible,
+    .drawer-header button:hover,
+    .drawer-header button:focus-visible,
+    .toolbar select:focus-visible {
       background: var(--vzlab-muted-surface);
       border-color: var(--vzlab-ring);
       outline: none;
     }
 
-    button:active {
+    .toolbar button:active,
+    .drawer-header button:active {
       transform: translateY(1px);
     }
 
-    button svg {
+    .toolbar button svg,
+    .drawer-header button svg {
       width: 14px;
       height: 14px;
     }
 
-    button.is-busy svg {
+    .toolbar button.is-busy svg {
       animation: spin 700ms linear infinite;
     }
 
@@ -253,21 +258,6 @@ export const vizslaLabStyles: CSSResultGroup = [
       border-radius: 999px;
       background: var(--vzlab-panel);
       color: var(--vzlab-muted);
-      white-space: nowrap;
-    }
-
-    .cursor {
-      height: 28px;
-      min-width: 40px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0 8px;
-      border: 1px solid var(--vzlab-border);
-      border-radius: 6px;
-      background: var(--vzlab-panel);
-      color: var(--vzlab-muted);
-      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
@@ -407,7 +397,7 @@ export const vizslaLabStyles: CSSResultGroup = [
         flex-wrap: wrap;
       }
 
-      select {
+      .toolbar select {
         min-width: 150px;
       }
     }

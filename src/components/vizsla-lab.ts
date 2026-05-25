@@ -50,7 +50,6 @@ export class VizslaLabElement extends LitElement {
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
   private diagnosticsBusy = false;
-  private cursor = "1:1";
   private diagnosticTimer: number | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
@@ -102,7 +101,6 @@ export class VizslaLabElement extends LitElement {
         status: this.status,
         inspectorOpen: this.inspectorOpen,
         diagnosticsBusy: this.diagnosticsBusy,
-        cursor: this.cursor,
       },
       {
         onScenarioChange: (event) => this.onScenarioChange(event),
@@ -143,10 +141,6 @@ export class VizslaLabElement extends LitElement {
     });
 
     this.editorDisposables.push(
-      this.editor.onDidChangeCursorPosition((event) => {
-        this.cursor = `${event.position.lineNumber}:${event.position.column}`;
-        this.requestUpdate();
-      }),
       this.editor.onDidChangeModelContent(() => {
         const state = this.activeFileState();
         if (!state || !isSourceFile(state.file.path)) {
@@ -347,7 +341,6 @@ export class VizslaLabElement extends LitElement {
     this.createModels(scenario);
     this.editor?.setModel(this.activeFileState()?.model ?? null);
     this.editor?.updateOptions({ readOnly: this.activeFileState()?.file.editable === false });
-    this.cursor = "1:1";
     this.restartClient();
     this.requestUpdate();
   }
