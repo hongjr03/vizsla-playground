@@ -31,7 +31,27 @@ export const vizslaLabStyles: CSSResultGroup = [
       --vzlab-height: 620px;
     }
 
-    * {
+    :host,
+    .shell,
+    .body,
+    .editor-panel,
+    .workspace-row,
+    .file-strip,
+    .file-strip button,
+    .toolbar,
+    .select,
+    .select > span,
+    .toolbar select,
+    .toolbar button,
+    .drawer,
+    .drawer-header,
+    .drawer-header button,
+    .panel,
+    .empty,
+    .diagnostic,
+    .status,
+    .badge,
+    .status-dot {
       box-sizing: border-box;
     }
 
@@ -409,9 +429,12 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     @media (prefers-reduced-motion: reduce) {
-      *,
-      *::before,
-      *::after {
+      .toolbar button,
+      .drawer-header button,
+      .toolbar button::before,
+      .toolbar button::after,
+      .drawer-header button::before,
+      .drawer-header button::after {
         animation-duration: 1ms !important;
         transition-duration: 1ms !important;
       }
