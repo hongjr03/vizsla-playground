@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/emscripten-core/emsdk.git",
+  "ref": "refs/tags/upstream/5.0.2",
+  "commit": "c817c0ca4ba889ee24a185fd954cff7de1bd8afa",
+  "version": "5.0.2"
+}

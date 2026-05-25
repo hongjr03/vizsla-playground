@@ -1,0 +1,32 @@
+{
+  "name": "vizsla-playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1 --port 5177",
+    "build": "astro check && astro build",
+    "build:embed": "vite build --config vite.embed.config.ts",
+    "preview": "astro preview --host 127.0.0.1 --port 4177",
+    "prepare:vizsla": "powershell -ExecutionPolicy Bypass -File scripts/prepare-vizsla.ps1",
+    "sync:vscode": "powershell -ExecutionPolicy Bypass -File scripts/sync-vscode-assets.ps1",
+    "setup:emsdk": "powershell -ExecutionPolicy Bypass -File scripts/setup-emsdk.ps1",
+    "build:wasm": "powershell -ExecutionPolicy Bypass -File scripts/build-vizsla-wasm.ps1",
+    "install:docs-widget": "powershell -ExecutionPolicy Bypass -File scripts/install-docs-widget.ps1"
+  },
+  "dependencies": {
+    "astro": "^6.3.7",
+    "lit": "^3.3.3",
+    "lucide": "^1.16.0",
+    "monaco-editor": "^0.55.1",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  }
+}

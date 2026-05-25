@@ -1,0 +1,490 @@
+diff --git a/crates/slang/bindings/rust/build.rs b/crates/slang/bindings/rust/build.rs
+index 4fd24f9..e98350d 100644
+--- a/crates/slang/bindings/rust/build.rs
++++ b/crates/slang/bindings/rust/build.rs
+@@ -25,6 +25,7 @@ fn generate_cxx_bridge() -> PathBuf {
+ 
+ fn build_cpp_lib(cxxbridge_dir: &Path, debug: bool) -> PathBuf {
+     let cmake_profile = if debug { "Debug" } else { "Release" };
++    let emscripten = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("emscripten");
+ 
+     // Configure CMake build
+     let config = &mut cmake::Config::new(".");
+@@ -38,11 +39,26 @@ fn build_cpp_lib(cxxbridge_dir: &Path, debug: bool) -> PathBuf {
+         .define("SLANG_INCLUDE_PYLIB", "OFF")
+         .define("SLANG_INCLUDE_RUSTLIB", "ON")
+         .define("SLANG_RUST_CXXBRIDGE_DIR", cxxbridge_dir.to_string_lossy().as_ref())
+-        .define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL")
+         .profile(cmake_profile)
+         .define("CMAKE_VERBOSE_MAKEFILE", "ON");
+ 
+-    if !debug && cfg!(target_env = "msvc") {
++    if !emscripten {
++        config.define("CMAKE_MSVC_RUNTIME_LIBRARY", "MultiThreadedDLL");
++    }
++
++    if emscripten {
++        config
++            .define("SLANG_USE_MIMALLOC", "OFF")
++            .define("CMAKE_TRY_COMPILE_TARGET_TYPE", "STATIC_LIBRARY")
++            .define("CMAKE_CXX_FLAGS", "-fwasm-exceptions -include cstdlib")
++            .define("CMAKE_CXX_FLAGS_RELEASE", "-O2 -DNDEBUG")
++            .define("CMAKE_C_FLAGS_RELEASE", "-O2 -DNDEBUG");
++        if let Ok(toolchain_file) = env::var("EMSCRIPTEN_CMAKE_TOOLCHAIN_FILE") {
++            config.define("CMAKE_TOOLCHAIN_FILE", toolchain_file);
++        }
++    }
++
++    if !emscripten && !debug && cfg!(target_env = "msvc") {
+         // cmake-rs still sets config-specific MSVC flags for Visual Studio
+         // generators to preserve /MD or /MT. That replaces CMake's built-in
+         // Release defaults, while cmake-rs has already filtered optimization
+@@ -59,19 +75,22 @@ fn build_cpp_lib(cxxbridge_dir: &Path, debug: bool) -> PathBuf {
+ 
+ fn setup_linking(install_dir: &Path, debug: bool) {
+     let lib_dir = install_dir.join("lib");
++    let emscripten = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("emscripten");
+     let fmt_lib = if debug { "fmtd" } else { "fmt" };
+-    let mimalloc_lib = if cfg!(target_env = "msvc") {
+-        if debug { "mimalloc-static-debug" } else { "mimalloc-static" }
+-    } else {
+-        if debug { "mimalloc-debug" } else { "mimalloc" }
+-    };
+ 
+     println!("cargo:rustc-link-search=native={}", lib_dir.display());
+     println!("cargo:rustc-link-lib=static:+whole-archive,-bundle=slang_rust_bridge");
+     println!("cargo:rustc-link-lib=static:-bundle=svlang");
+     println!("cargo:rustc-link-lib=static:-bundle={}", fmt_lib);
+-    println!("cargo:rustc-link-lib=static:-bundle={}", mimalloc_lib);
+-    if cfg!(target_os = "windows") {
++    if !emscripten {
++        let mimalloc_lib = if cfg!(target_env = "msvc") {
++            if debug { "mimalloc-static-debug" } else { "mimalloc-static" }
++        } else {
++            if debug { "mimalloc-debug" } else { "mimalloc" }
++        };
++        println!("cargo:rustc-link-lib=static:-bundle={}", mimalloc_lib);
++    }
++    if !emscripten && cfg!(target_os = "windows") {
+         // mimalloc's Windows large-page support pulls in these token APIs.
+         println!("cargo:rustc-link-lib=dylib=Advapi32");
+     }
+diff --git a/crates/slang/bindings/rust/lib.rs b/crates/slang/bindings/rust/lib.rs
+index f59f826..4dc9b0f 100644
+--- a/crates/slang/bindings/rust/lib.rs
++++ b/crates/slang/bindings/rust/lib.rs
+@@ -563,7 +563,10 @@ impl fmt::Display for Bit {
+ }
+ 
+ impl SourceLocation {
++    #[cfg(target_pointer_width = "64")]
+     const NO_LOCATION: usize = (1usize << 36) - 1;
++    #[cfg(target_pointer_width = "32")]
++    const NO_LOCATION: usize = usize::MAX;
+ 
+     #[inline]
+     pub fn from_unique_ptr(_ptr: UniquePtr<ffi::SourceLocation>) -> Option<Self> {
+diff --git a/crates/slang/external/boost_unordered.hpp b/crates/slang/external/boost_unordered.hpp
+index 0689261..8cd381b 100644
+--- a/crates/slang/external/boost_unordered.hpp
++++ b/crates/slang/external/boost_unordered.hpp
+@@ -54,6 +54,12 @@
+ #include <utility>
+ #include <variant>
+ 
++#if defined(__EMSCRIPTEN__)
++namespace boost {
++using uint16_t = std::uint16_t;
++}
++#endif
++
+ #pragma once
+ 
+ // This is a minimal header that contains only the small set
+diff --git a/crates/slang/include/slang/parsing/Token.h b/crates/slang/include/slang/parsing/Token.h
+index 5533563..a6aec85 100644
+--- a/crates/slang/include/slang/parsing/Token.h
++++ b/crates/slang/include/slang/parsing/Token.h
+@@ -119,7 +119,7 @@ public:
+ 
+     Trivia clone(BumpAllocator& alloc, bool deep = false) const;
+ };
+-#if !defined(_M_IX86) && !defined(__clang_analyzer__)
++#if !defined(_M_IX86) && !defined(__EMSCRIPTEN__) && !defined(__clang_analyzer__)
+ static_assert(sizeof(Trivia) == 16);
+ #endif
+ 
+@@ -220,7 +220,7 @@ private:
+     static constexpr int MaxTriviaSmallCount = (1 << 4) - 2;
+ };
+ 
+-#if !defined(_M_IX86)
++#if !defined(_M_IX86) && !defined(__EMSCRIPTEN__)
+ static_assert(sizeof(Token) == 16);
+ #endif
+ static_assert(std::is_trivially_copyable_v<Token>);
+diff --git a/crates/slang/include/slang/util/ThreadPool.h b/crates/slang/include/slang/util/ThreadPool.h
+index b495101..11e7e1c 100644
+--- a/crates/slang/include/slang/util/ThreadPool.h
++++ b/crates/slang/include/slang/util/ThreadPool.h
+@@ -21,6 +21,10 @@
+ 
+ namespace slang {
+ 
++#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
++#    define SLANG_EMSCRIPTEN_SINGLE_THREADED 1
++#endif
++
+ /// A lightweight thread pool for running concurrent jobs.
+ class ThreadPool {
+ public:
+@@ -29,6 +33,53 @@ public:
+     /// @param threadCount The number of threads to create in the pool. If zero (the default)
+     ///                    the number of threads will be set to the number of concurrent threads
+     ///                    supported by the system.
++#if defined(SLANG_EMSCRIPTEN_SINGLE_THREADED)
++    explicit ThreadPool(unsigned threadCount = 0) { (void)threadCount; }
++
++    ~ThreadPool() = default;
++
++    size_t getThreadCount() const { return 1; }
++
++    template<typename TFunc, typename... TArgs>
++    void pushTask(TFunc&& task, TArgs&&... args) {
++        std::invoke(std::forward<TFunc>(task), std::forward<TArgs>(args)...);
++    }
++
++    template<typename TFunc, typename... TArgs,
++             typename TResult = std::invoke_result_t<std::decay_t<TFunc>, std::decay_t<TArgs>...>>
++    [[nodiscard]] std::future<TResult> submit(TFunc&& task, TArgs&&... args) {
++        std::promise<TResult> taskPromise;
++        SLANG_TRY {
++            if constexpr (std::is_void_v<TResult>) {
++                std::invoke(std::forward<TFunc>(task), std::forward<TArgs>(args)...);
++                taskPromise.set_value();
++            }
++            else {
++                taskPromise.set_value(std::invoke(std::forward<TFunc>(task),
++                                                  std::forward<TArgs>(args)...));
++            }
++        }
++        SLANG_CATCH(...) {
++            taskPromise.set_exception(std::current_exception());
++        }
++        return taskPromise.get_future();
++    }
++
++    template<typename TIndex, typename TFunc>
++    void pushLoop(TIndex from, TIndex to, TFunc&& body, size_t numBlocks = 0) {
++        (void)numBlocks;
++        if (to > from)
++            std::invoke(std::forward<TFunc>(body), from, to);
++    }
++
++    void waitForAll() {}
++
++    template<typename R, typename P>
++    bool waitForAll(const std::chrono::duration<R, P>& duration) {
++        (void)duration;
++        return true;
++    }
++#else
+     explicit ThreadPool(unsigned threadCount = 0) {
+         if (threadCount == 0) {
+             threadCount = std::thread::hardware_concurrency();
+@@ -187,6 +238,7 @@ private:
+     size_t currentTasks = 0;
+     bool running;
+     bool waiting;
++#endif
+ };
+ 
+ } // namespace slang
+diff --git a/crates/utils/src/thread.rs b/crates/utils/src/thread.rs
+index 8621157..af8bf11 100644
+--- a/crates/utils/src/thread.rs
++++ b/crates/utils/src/thread.rs
+@@ -77,6 +77,12 @@ impl Pool {
+     where
+         F: FnOnce() + Send + 'static,
+     {
++        if cfg!(target_os = "emscripten") {
++            let _ = intent;
++            f();
++            return;
++        }
++
+         let f = Box::new(move || {
+             if cfg!(debug_assertions) {
+                 intent.assert_is_used_on_current_thread();
+diff --git a/crates/vfs-notify/src/lib.rs b/crates/vfs-notify/src/lib.rs
+index 010bfc4..9dfa17f 100644
+--- a/crates/vfs-notify/src/lib.rs
++++ b/crates/vfs-notify/src/lib.rs
+@@ -18,6 +18,7 @@ pub struct NotifyHandle {
+     // Relative order of fields below is significant.
+     sender: Sender<ServerMsg>,
+     _handler: Option<thread::JoinHandle>,
++    browser_loader: Option<BrowserLoader>,
+ }
+ 
+ #[derive(Debug)]
+@@ -28,6 +29,15 @@ enum ServerMsg {
+ 
+ impl loader::Handle for NotifyHandle {
+     fn spawn(sender: loader::Sender) -> NotifyHandle {
++        if cfg!(target_os = "emscripten") {
++            let (server_sender, _) = unbounded::<ServerMsg>();
++            return NotifyHandle {
++                sender: server_sender,
++                _handler: None,
++                browser_loader: Some(BrowserLoader::new(sender)),
++            };
++        }
++
+         let actor = NotifyActor::new(sender);
+         let (sender, receiver) = unbounded::<ServerMsg>();
+         let thread = match thread::Builder::new(thread::ThreadIntent::Worker)
+@@ -40,16 +50,26 @@ impl loader::Handle for NotifyHandle {
+                 None
+             }
+         };
+-        NotifyHandle { sender, _handler: thread }
++        NotifyHandle { sender, _handler: thread, browser_loader: None }
+     }
+ 
+     fn set_config(&mut self, config: loader::Config) {
++        if let Some(loader) = &mut self.browser_loader {
++            loader.set_config(config);
++            return;
++        }
++
+         if self.sender.send(ServerMsg::Config(config)).is_err() {
+             tracing::error!("failed to send VFS config to loader thread");
+         }
+     }
+ 
+     fn invalidate(&mut self, path: AbsPathBuf) {
++        if let Some(loader) = &mut self.browser_loader {
++            loader.invalidate(path);
++            return;
++        }
++
+         if self.sender.send(ServerMsg::Invalidate(path)).is_err() {
+             tracing::error!("failed to send VFS invalidation to loader thread");
+         }
+@@ -60,6 +80,105 @@ impl loader::Handle for NotifyHandle {
+     }
+ }
+ 
++#[derive(Debug)]
++struct BrowserLoader {
++    sender: loader::Sender,
++    config_version: u32,
++    loaded_paths: FxHashSet<AbsPathBuf>,
++}
++
++impl BrowserLoader {
++    fn new(sender: loader::Sender) -> Self {
++        Self { sender, config_version: 0, loaded_paths: FxHashSet::default() }
++    }
++
++    fn set_config(&mut self, config: loader::Config) {
++        let config_version = config.version;
++        self.config_version = config_version;
++        let has_reconcile_step = !self.loaded_paths.is_empty();
++        let n_entries = config.to_load.len();
++        let n_total = n_entries + usize::from(has_reconcile_step);
++        if n_total > 0 {
++            self.send(loader::Message::Progress {
++                n_total,
++                n_done: 0,
++                config_version,
++            });
++        }
++
++        let previous_loaded_paths = mem::take(&mut self.loaded_paths);
++        let mut reported_paths = FxHashSet::default();
++        let mut loaded_paths = FxHashSet::default();
++
++        for (index, entry) in config.to_load.into_iter().enumerate() {
++            let (watch_tx, _) = unbounded();
++            let files = NotifyActor::load_entry(&watch_tx, entry, false);
++            reported_paths.extend(files.iter().map(|(path, _)| path.clone()));
++            loaded_paths.extend(
++                files
++                    .iter()
++                    .filter(|(_, result)| !matches!(result, LoadResult::LoadError))
++                    .map(|(path, _)| path.clone()),
++            );
++            self.send(loader::Message::Loaded { files, config_version });
++            self.send(loader::Message::Progress {
++                n_total,
++                n_done: index + 1,
++                config_version,
++            });
++        }
++
++        let unloaded = previous_loaded_paths
++            .difference(&reported_paths)
++            .cloned()
++            .map(|path| (path, LoadResult::LoadError))
++            .collect_vec();
++        self.loaded_paths = loaded_paths;
++        if !unloaded.is_empty() {
++            self.send(loader::Message::Loaded { files: unloaded, config_version });
++        }
++        if has_reconcile_step {
++            self.send(loader::Message::Progress {
++                n_total,
++                n_done: n_total,
++                config_version,
++            });
++        } else if n_total == 0 {
++            self.send(loader::Message::Progress {
++                n_total,
++                n_done: 0,
++                config_version,
++            });
++        }
++    }
++
++    fn invalidate(&mut self, path: AbsPathBuf) {
++        let contents = read(path.as_path());
++        let files = vec![(path, contents)];
++        self.record_loaded_files(&files);
++        self.send(loader::Message::Loaded {
++            files,
++            config_version: self.config_version,
++        });
++    }
++
++    fn record_loaded_files(&mut self, files: &[(AbsPathBuf, LoadResult)]) {
++        for (path, result) in files {
++            if matches!(result, LoadResult::LoadError) {
++                self.loaded_paths.remove(path);
++            } else {
++                self.loaded_paths.insert(path.clone());
++            }
++        }
++    }
++
++    fn send(&self, msg: loader::Message) {
++        if self.sender.send(msg).is_err() {
++            tracing::error!("failed to send browser VFS loader message to main loop");
++        }
++    }
++}
++
+ type NotifyEvent = notify::Result<notify::Event>;
+ 
+ struct NotifyActor {
+diff --git a/src/config.rs b/src/config.rs
+index 187420c..af34413 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -1,4 +1,6 @@
++#[path = "config/caps.rs"]
+ pub mod caps;
++#[path = "config/user_config.rs"]
+ pub mod user_config;
+ 
+ use std::fmt;
+diff --git a/src/global_state.rs b/src/global_state.rs
+index e40551f..fb2e2ad 100644
+--- a/src/global_state.rs
++++ b/src/global_state.rs
+@@ -1,15 +1,28 @@
++#[path = "global_state/diagnostics.rs"]
+ mod diagnostics;
++#[path = "global_state/dispatcher.rs"]
+ mod dispatcher;
++#[path = "global_state/handlers.rs"]
+ mod handlers;
++#[path = "global_state/main_loop.rs"]
+ pub mod main_loop;
++#[path = "global_state/mem_docs.rs"]
+ mod mem_docs;
++#[path = "global_state/process_changes.rs"]
+ pub(crate) mod process_changes;
++#[path = "global_state/project_status.rs"]
+ mod project_status;
++#[path = "global_state/qihe.rs"]
+ mod qihe;
++#[path = "global_state/reload.rs"]
+ pub mod reload;
++#[path = "global_state/respond.rs"]
+ pub mod respond;
++#[path = "global_state/snapshot.rs"]
+ pub(crate) mod snapshot;
++#[path = "global_state/trace.rs"]
+ mod trace;
++#[path = "global_state/workspace_state.rs"]
+ mod workspace_state;
+ 
+ use std::time::Instant;
+diff --git a/src/global_state/handlers.rs b/src/global_state/handlers.rs
+index b9121ea..9ef5e52 100644
+--- a/src/global_state/handlers.rs
++++ b/src/global_state/handlers.rs
+@@ -1,2 +1,4 @@
++#[path = "handlers/notification.rs"]
+ pub(crate) mod notification;
++#[path = "handlers/request.rs"]
+ pub(crate) mod request;
+diff --git a/src/global_state/handlers/request.rs b/src/global_state/handlers/request.rs
+index ca7a680..4cf335f 100644
+--- a/src/global_state/handlers/request.rs
++++ b/src/global_state/handlers/request.rs
+@@ -15,6 +15,7 @@ use crate::{
+     },
+ };
+ 
++#[path = "request/code_action.rs"]
+ mod code_action;
+ pub(crate) use code_action::{handle_code_action, handle_code_action_resolve};
+ 
+diff --git a/src/global_state/main_loop.rs b/src/global_state/main_loop.rs
+index 527d0b9..b1e8b7e 100644
+--- a/src/global_state/main_loop.rs
++++ b/src/global_state/main_loop.rs
+@@ -819,6 +819,26 @@ impl GlobalState {
+         anyhow::bail!("{} exited without proper shutdown sequence", self.config.opt.process_name);
+     }
+ 
++    pub(crate) fn handle_lsp_message_for_browser(&mut self, msg: Message) -> anyhow::Result<()> {
++        self.handle_event(Event::Lsp(msg))?;
++        self.drain_browser_queued_events()
++    }
++
++    pub(crate) fn drain_browser_queued_events(&mut self) -> anyhow::Result<()> {
++        while let Ok(task) = self.task_pool.receiver.try_recv() {
++            self.handle_event(Event::Task(task))?;
++        }
++
++        while let Ok(msg) = self.vfs_loader.receiver.try_recv() {
++            self.handle_event(Event::Vfs(msg))?;
++        }
++
++        while let Ok(task) = self.task_pool.receiver.try_recv() {
++            self.handle_event(Event::Task(task))?;
++        }
++        Ok(())
++    }
++
+     fn register_did_save_cap(&mut self) {
+         let mut document_selector = vec![lsp_types::DocumentFilter {
+             language: None,
+diff --git a/src/lsp_ext.rs b/src/lsp_ext.rs
+index 9ea3df3..850b87d 100644
+--- a/src/lsp_ext.rs
++++ b/src/lsp_ext.rs
+@@ -1,4 +1,8 @@
++#[path = "lsp_ext/ext.rs"]
+ pub(crate) mod ext;
++#[path = "lsp_ext/from_proto.rs"]
+ pub(crate) mod from_proto;
++#[path = "lsp_ext/lsp_error.rs"]
+ pub(crate) mod lsp_error;
++#[path = "lsp_ext/to_proto.rs"]
+ pub(crate) mod to_proto;

@@ -1,0 +1,51 @@
+---
+import VizslaLab from "../components/VizslaLab.astro";
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Vizsla Lab Docs Embed</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f7f3e7;
+        color: #151610;
+        font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
+      }
+
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 44px 22px 64px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: clamp(30px, 5vw, 54px);
+        line-height: 1;
+      }
+
+      p {
+        max-width: 720px;
+        margin: 0 0 28px;
+        color: #55513f;
+        font-size: 17px;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Vizsla Lab in Astro Docs</h1>
+      <p>
+        This page mirrors how the widget is embedded in the Vizsla Astro docs: one Astro component,
+        docs sizing enabled, and the same WASM plus VS Code assets as the standalone playground.
+      </p>
+      <VizslaLab docs scenario="macro-guard" height="620px" />
+    </main>
+  </body>
+</html>

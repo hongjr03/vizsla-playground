@@ -1,0 +1,40 @@
+---
+interface Props {
+  scenario?: string;
+  height?: string;
+  docs?: boolean;
+  wasmBaseUrl?: string;
+  vscodeAssetsUrl?: string;
+}
+
+const {
+  scenario = "counter",
+  height,
+  docs = false,
+  wasmBaseUrl = "/wasm/",
+  vscodeAssetsUrl = "/vscode/",
+} = Astro.props;
+---
+
+<script>
+  import "./vizsla-lab";
+</script>
+
+{
+  docs ? (
+    <vizsla-lab
+      docs
+      scenario={scenario}
+      height={height}
+      wasm-base-url={wasmBaseUrl}
+      vscode-assets-url={vscodeAssetsUrl}
+    ></vizsla-lab>
+  ) : (
+    <vizsla-lab
+      scenario={scenario}
+      height={height}
+      wasm-base-url={wasmBaseUrl}
+      vscode-assets-url={vscodeAssetsUrl}
+    ></vizsla-lab>
+  )
+}

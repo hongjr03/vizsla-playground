@@ -1,0 +1,44 @@
+[package]
+name = "vizsla-lsp-wasm"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "vizsla-lsp-wasm"
+path = "src/main.rs"
+
+[dependencies]
+always-assert = "0.1.3"
+anyhow = "1.0.75"
+base-db = { path = "../../.vendor/vizsla/crates/base-db" }
+const_format = "0.2.31"
+crossbeam-channel = "0.5.8"
+dunce = "1.0.5"
+hir = { path = "../../.vendor/vizsla/crates/hir" }
+ide = { path = "../../.vendor/vizsla/crates/ide" }
+itertools = "0.14.0"
+la-arena = "0.3.1"
+lsp-server = "0.7.6"
+lsp-types = "0.95.0"
+nohash-hasher = "0.2.0"
+num_cpus = "1.16.0"
+parking_lot = "0.12.1"
+project-model = { path = "../../.vendor/vizsla/crates/project-model" }
+regex = "1.10.2"
+rustc-hash = "2.1.1"
+span = { path = "../../.vendor/vizsla/crates/span" }
+syntax = { path = "../../.vendor/vizsla/crates/syntax" }
+thiserror = "2.0.0"
+toml = "0.9.8"
+tracing = "0.1.37"
+triomphe = "0.1.9"
+utils = { path = "../../.vendor/vizsla/crates/utils" }
+vfs = { path = "../../.vendor/vizsla/crates/vfs" }
+vfs-notify = { path = "../../.vendor/vizsla/crates/vfs-notify" }
+
+serde = { version = "1.0.189", features = ["derive"] }
+serde_json = "1.0.107"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.9", features = ["processthreadsapi"] }

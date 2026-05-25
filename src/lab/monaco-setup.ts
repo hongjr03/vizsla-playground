@@ -1,0 +1,398 @@
+import * as monaco from "monaco-editor";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker&inline";
+import { createOnigScanner, createOnigString, loadWASM } from "vscode-oniguruma";
+import onigWasm from "vscode-oniguruma/release/onig.wasm?url";
+import { INITIAL, parseRawGrammar, Registry, type IOnigLib, type StateStack } from "vscode-textmate";
+
+let configured = false;
+let onigLibPromise: Promise<IOnigLib> | null = null;
+
+export function configureMonaco(): typeof monaco {
+  if (!configured) {
+    installShadowCaretRangeFromPoint();
+
+    self.MonacoEnvironment = {
+      getWorker() {
+        return new EditorWorker();
+      },
+    };
+
+    monaco.languages.register({
+      id: "systemverilog",
+      extensions: [".sv", ".svh", ".svi"],
+      aliases: ["SystemVerilog", "systemverilog"],
+    });
+    monaco.languages.register({
+      id: "verilog",
+      extensions: [".v", ".vh"],
+      aliases: ["Verilog", "verilog"],
+    });
+
+    defineVizslaTheme(monaco, []);
+
+    configured = true;
+  }
+
+  return monaco;
+}
+
+export function syncVizslaSemanticTheme(
+  monacoModule: typeof monaco,
+  serverCapabilities: unknown,
+): void {
+  defineVizslaTheme(monacoModule, semanticTokenTypesFromCapabilities(serverCapabilities));
+  monacoModule.editor.setTheme("vizsla-lab");
+}
+
+function defineVizslaTheme(monacoModule: typeof monaco, semanticTokenTypes: readonly string[]): void {
+  const semanticModifierRules = Array.from(new Set(semanticTokenTypes)).flatMap((tokenType) => [
+    { token: `${tokenType}.read`, fontStyle: "bold" },
+    { token: `${tokenType}.write`, fontStyle: "bold underline" },
+  ]);
+
+  monacoModule.editor.defineTheme("vizsla-lab", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "keyword", foreground: "c7f464" },
+      { token: "keyword.preprocessor", foreground: "ffb02e" },
+      { token: "type.identifier", foreground: "13b9a5" },
+      { token: "number", foreground: "ef6f6c" },
+      ...semanticModifierRules,
+    ],
+    colors: {
+      "editor.background": "#10110f",
+      "editor.foreground": "#eee9d7",
+      "editorLineNumber.foreground": "#77705d",
+      "editorCursor.foreground": "#c7f464",
+      "editor.selectionBackground": "#435100",
+      "editor.inactiveSelectionBackground": "#303824",
+      "editorGutter.background": "#10110f",
+    },
+  });
+}
+
+function semanticTokenTypesFromCapabilities(serverCapabilities: unknown): string[] {
+  if (!isRecord(serverCapabilities) || !isRecord(serverCapabilities.semanticTokensProvider)) {
+    return [];
+  }
+  const legend = serverCapabilities.semanticTokensProvider.legend;
+  if (!isRecord(legend) || !Array.isArray(legend.tokenTypes)) {
+    return [];
+  }
+  return legend.tokenTypes.filter((item): item is string => typeof item === "string");
+}
+
+export async function wireVizslaVscodeLanguage(
+  _editor: monaco.editor.IStandaloneCodeEditor,
+  assetBaseUrl = "/vscode/",
+): Promise<void> {
+  const normalizedBaseUrl = assetBaseUrl.endsWith("/") ? assetBaseUrl : `${assetBaseUrl}/`;
+  await Promise.all([
+    applyLanguageConfiguration("systemverilog", `${normalizedBaseUrl}language-configuration.json`),
+    applyLanguageConfiguration("verilog", `${normalizedBaseUrl}language-configuration.json`),
+  ]);
+
+  const registry = new Registry({
+    onigLib: getOnigLib(),
+    loadGrammar: async (scopeName: string) => {
+      const path = grammarAssetForScope(scopeName);
+      if (!path) {
+        return null;
+      }
+      const response = await fetch(`${normalizedBaseUrl}syntaxes/${path}`);
+      if (!response.ok) {
+        throw new Error(`Missing VS Code grammar asset: ${path}`);
+      }
+      return parseRawGrammar(await response.text(), path);
+    },
+  });
+
+  await wireVizslaTextMateGrammars(registry, new Map([["verilog", "source.verilog"], ["systemverilog", "source.systemverilog"]]));
+}
+
+async function applyLanguageConfiguration(languageId: string, url: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Missing VS Code language configuration: ${url}`);
+  }
+  const raw = (await response.json()) as VscodeLanguageConfiguration;
+  monaco.languages.setLanguageConfiguration(languageId, toMonacoLanguageConfiguration(raw));
+}
+
+function grammarAssetForScope(scopeName: string): string | null {
+  switch (scopeName) {
+    case "source.verilog":
+      return "verilog.tmLanguage.json";
+    case "source.systemverilog":
+      return "systemverilog.tmLanguage.json";
+    default:
+      return null;
+  }
+}
+
+function getOnigLib(): Promise<IOnigLib> {
+  onigLibPromise ??= fetch(onigWasm)
+    .then((response) => response.arrayBuffer())
+    .then(async (wasm) => {
+      await loadWASM(wasm);
+      return {
+        createOnigScanner(patterns) {
+          return createOnigScanner(patterns) as unknown as ReturnType<IOnigLib["createOnigScanner"]>;
+        },
+        createOnigString(value) {
+          return createOnigString(value) as unknown as ReturnType<IOnigLib["createOnigString"]>;
+        },
+      };
+    });
+  return onigLibPromise;
+}
+
+async function wireVizslaTextMateGrammars(registry: Registry, grammars: Map<string, string>): Promise<void> {
+  await Promise.all(
+    Array.from(grammars, async ([languageId, scopeName]) => {
+      const grammar = await registry.loadGrammar(scopeName);
+      if (!grammar) {
+        throw new Error(`Missing TextMate grammar for ${scopeName}`);
+      }
+
+      monaco.languages.setTokensProvider(languageId, {
+        getInitialState: () => new TextMateState(INITIAL),
+        tokenize: (line, state) => {
+          const currentState = state instanceof TextMateState ? state.ruleStack : INITIAL;
+          const result = grammar.tokenizeLine(line, currentState);
+          return {
+            endState: new TextMateState(result.ruleStack),
+            tokens: result.tokens.map((token) => ({
+              startIndex: token.startIndex,
+              scopes: toMonacoToken(token.scopes),
+            })),
+          };
+        },
+      });
+    }),
+  );
+}
+
+class TextMateState implements monaco.languages.IState {
+  constructor(readonly ruleStack: StateStack) {}
+
+  clone(): TextMateState {
+    return new TextMateState(this.ruleStack.clone());
+  }
+
+  equals(other: monaco.languages.IState): boolean {
+    return other instanceof TextMateState && this.ruleStack.equals(other.ruleStack);
+  }
+}
+
+function toMonacoToken(scopes: string[]): string {
+  for (let index = scopes.length - 1; index >= 0; index -= 1) {
+    const scope = scopes[index];
+    if (!scope.startsWith("source.")) {
+      return scope;
+    }
+  }
+  return "";
+}
+
+interface VscodeLanguageConfiguration {
+  comments?: {
+    lineComment?: string | { comment: string; noIndent?: boolean };
+    blockComment?: [string, string];
+  };
+  brackets?: [string, string][];
+  autoClosingPairs?: Array<{ open: string; close: string; notIn?: string[] }>;
+  surroundingPairs?: [string, string][];
+  folding?: {
+    markers?: {
+      start: string;
+      end: string;
+    };
+  };
+  wordPattern?: string;
+  indentationRules?: {
+    increaseIndentPattern?: string;
+    decreaseIndentPattern?: string;
+    indentNextLinePattern?: string;
+    unIndentedLinePattern?: string;
+  };
+  onEnterRules?: Array<{
+    beforeText: string;
+    afterText?: string;
+    previousLineText?: string;
+    action: {
+      indent: "none" | "indent" | "indentOutdent" | "outdent";
+      appendText?: string;
+      removeText?: number;
+    };
+  }>;
+}
+
+function toMonacoLanguageConfiguration(raw: VscodeLanguageConfiguration): monaco.languages.LanguageConfiguration {
+  return {
+    comments: raw.comments
+      ? {
+          lineComment:
+            typeof raw.comments.lineComment === "string" ? raw.comments.lineComment : raw.comments.lineComment?.comment,
+          blockComment: raw.comments.blockComment,
+        }
+      : undefined,
+    brackets: raw.brackets,
+    autoClosingPairs: raw.autoClosingPairs,
+    surroundingPairs: raw.surroundingPairs?.map(([open, close]) => ({ open, close })),
+    folding: raw.folding?.markers
+      ? {
+          markers: {
+            start: new RegExp(raw.folding.markers.start),
+            end: new RegExp(raw.folding.markers.end),
+          },
+        }
+      : undefined,
+    wordPattern: raw.wordPattern ? new RegExp(raw.wordPattern) : undefined,
+    indentationRules: toIndentationRules(raw.indentationRules),
+    onEnterRules: raw.onEnterRules?.map((rule) => ({
+      beforeText: new RegExp(rule.beforeText),
+      afterText: regexOrUndefined(rule.afterText),
+      previousLineText: regexOrUndefined(rule.previousLineText),
+      action: {
+        indentAction: indentAction(rule.action.indent),
+        appendText: rule.action.appendText,
+        removeText: rule.action.removeText,
+      },
+    })),
+  };
+}
+
+function toIndentationRules(
+  raw: VscodeLanguageConfiguration["indentationRules"],
+): monaco.languages.IndentationRule | undefined {
+  const increaseIndentPattern = regexOrUndefined(raw?.increaseIndentPattern);
+  const decreaseIndentPattern = regexOrUndefined(raw?.decreaseIndentPattern);
+  if (!increaseIndentPattern || !decreaseIndentPattern) {
+    return undefined;
+  }
+
+  return {
+    increaseIndentPattern,
+    decreaseIndentPattern,
+    indentNextLinePattern: regexOrUndefined(raw?.indentNextLinePattern) ?? null,
+    unIndentedLinePattern: regexOrUndefined(raw?.unIndentedLinePattern) ?? null,
+  };
+}
+
+function regexOrUndefined(pattern: string | undefined): RegExp | undefined {
+  return pattern ? new RegExp(pattern) : undefined;
+}
+
+function indentAction(value: "none" | "indent" | "indentOutdent" | "outdent"): monaco.languages.IndentAction {
+  switch (value) {
+    case "indent":
+      return monaco.languages.IndentAction.Indent;
+    case "indentOutdent":
+      return monaco.languages.IndentAction.IndentOutdent;
+    case "outdent":
+      return monaco.languages.IndentAction.Outdent;
+    default:
+      return monaco.languages.IndentAction.None;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function installShadowCaretRangeFromPoint(): void {
+  if (!globalThis.ShadowRoot || typeof globalThis.document === "undefined") {
+    return;
+  }
+
+  const prototype = globalThis.ShadowRoot.prototype as ShadowRoot & {
+    caretRangeFromPoint?: (x: number, y: number) => Range | null;
+  };
+  if (typeof prototype.caretRangeFromPoint === "function") {
+    return;
+  }
+
+  Object.defineProperty(prototype, "caretRangeFromPoint", {
+    configurable: true,
+    value(this: ShadowRoot, x: number, y: number): Range | null {
+      const target = shadowElementFromPoint(this, x, y);
+      const textNode = target ? nearestTextNode(target) : null;
+      const range = document.createRange();
+      if (!textNode) {
+        range.selectNodeContents(this.host);
+        range.collapse(false);
+        return range;
+      }
+
+      const offset = textOffsetAtX(textNode, x);
+      range.setStart(textNode, offset);
+      range.setEnd(textNode, offset);
+      return range;
+    },
+  });
+}
+
+function shadowElementFromPoint(root: ShadowRoot, x: number, y: number): Element | null {
+  const nativeElementFromPoint = (root as ShadowRoot & {
+    elementFromPoint?: (x: number, y: number) => Element | null;
+  }).elementFromPoint;
+  if (typeof nativeElementFromPoint === "function") {
+    return nativeElementFromPoint.call(root, x, y);
+  }
+
+  let match: Element | null = null;
+  let matchArea = Number.POSITIVE_INFINITY;
+  for (const element of root.querySelectorAll("*")) {
+    const rect = element.getBoundingClientRect();
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      continue;
+    }
+
+    const area = rect.width * rect.height;
+    if (area <= matchArea) {
+      match = element;
+      matchArea = area;
+    }
+  }
+  return match;
+}
+
+function nearestTextNode(element: Element): Text | null {
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  let current = walker.nextNode();
+  let candidate: Text | null = null;
+  while (current) {
+    if (current.textContent && current.textContent.length > 0) {
+      candidate = current as Text;
+    }
+    current = walker.nextNode();
+  }
+  return candidate;
+}
+
+function textOffsetAtX(textNode: Text, x: number): number {
+  const text = textNode.data;
+  if (text.length === 0) {
+    return 0;
+  }
+
+  const parent = textNode.parentElement;
+  if (!parent) {
+    return text.length;
+  }
+
+  const rect = parent.getBoundingClientRect();
+  if (rect.width <= 0) {
+    return text.length;
+  }
+  if (x <= rect.left) {
+    return 0;
+  }
+  if (x >= rect.right) {
+    return text.length;
+  }
+
+  return Math.max(0, Math.min(text.length, Math.round(((x - rect.left) / rect.width) * text.length)));
+}
