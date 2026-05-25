@@ -12,6 +12,8 @@ pnpm dev
 
 Open `http://127.0.0.1:5177/`.
 
+The docs-style embedded widget example is available at `http://127.0.0.1:5177/embed-example/`.
+
 ## GitHub Pages
 
 Set the repository Pages source to GitHub Actions, then push to `main` or `master`, or run the `GitHub Pages` workflow manually.
