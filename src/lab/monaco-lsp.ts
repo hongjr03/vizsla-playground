@@ -1,4 +1,5 @@
 import type * as Monaco from "monaco-editor";
+import type { LabDiagnostic } from "../types";
 import type { LspRequest, MonacoModule } from "./monaco";
 import {
   arrayOf,
@@ -35,6 +36,7 @@ export interface MonacoLspBridgeOptions {
   serverCapabilities: unknown;
   ownsModel: (model: Monaco.editor.ITextModel) => boolean;
   uriForModel: (model: Monaco.editor.ITextModel) => string;
+  diagnosticsForModel?: (model: Monaco.editor.ITextModel) => readonly LabDiagnostic[];
   request: LspRequest;
 }
 
@@ -249,11 +251,12 @@ export function registerVizslaLspProviders(options: MonacoLspBridgeOptions): Mon
           if (!sameModel(model)) {
             return null;
           }
+          const lspRange = toLspRange(range);
           const result = await request("textDocument/codeAction", {
             textDocument: textDocument(model),
-            range: toLspRange(range),
+            range: lspRange,
             context: {
-              diagnostics: [],
+              diagnostics: codeActionDiagnostics(options.diagnosticsForModel?.(model) ?? [], lspRange),
               only: context.only ? [context.only] : undefined,
               triggerKind: context.trigger,
             },
@@ -333,4 +336,33 @@ export function registerVizslaLspProviders(options: MonacoLspBridgeOptions): Mon
         ]
       : []),
   ];
+}
+
+function codeActionDiagnostics(diagnostics: readonly LabDiagnostic[], range: ReturnType<typeof toLspRange>): unknown[] {
+  return diagnostics.filter((diagnostic) => rangesOverlap(diagnostic.range, range)).map((diagnostic) => {
+    const lspDiagnostic: Record<string, unknown> = {
+      range: diagnostic.range,
+      severity: diagnostic.severity,
+      source: diagnostic.source,
+      message: diagnostic.message,
+    };
+
+    if (diagnostic.rawCode ?? diagnostic.code) {
+      lspDiagnostic.code = diagnostic.rawCode ?? diagnostic.code;
+    }
+
+    if (diagnostic.data !== undefined) {
+      lspDiagnostic.data = diagnostic.data;
+    }
+
+    return lspDiagnostic;
+  });
+}
+
+function rangesOverlap(left: ReturnType<typeof toLspRange>, right: ReturnType<typeof toLspRange>): boolean {
+  return comparePosition(left.start, right.end) <= 0 && comparePosition(right.start, left.end) <= 0;
+}
+
+function comparePosition(left: ReturnType<typeof toLspRange>["start"], right: ReturnType<typeof toLspRange>["start"]): number {
+  return left.line === right.line ? left.character - right.character : left.line - right.line;
 }

@@ -2,15 +2,23 @@ import { LitElement, type PropertyValues, type TemplateResult } from "lit";
 import type * as Monaco from "monaco-editor";
 import { renderVizslaLabView } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
-import { VizslaBrowserClient } from "../lab/lsp-client";
+import { isClientDisposedError, VizslaBrowserClient } from "../lab/lsp-client";
 import { diagnosticsFromLspReport, registerVizslaLspProviders, toMarkerData } from "../lab/monaco-lsp";
 import { installShadowDomHoverBridge } from "../lab/monaco-shadow-hover";
-import { configureMonaco, syncVizslaSemanticTheme, wireVizslaVscodeLanguage } from "../lab/monaco-setup";
+import {
+  configureMonaco,
+  setVizslaMonacoTheme,
+  syncVizslaSemanticTheme,
+  vizslaThemeName,
+  wireVizslaVscodeLanguage,
+  type VizslaColorScheme,
+} from "../lab/monaco-setup";
 import {
   displayPath,
   entryFile,
   isSourceFile,
   languageIdForPath,
+  normalizeWorkspacePath,
   scenarioWorkspaceFiles,
   sourceFiles,
   workspaceUri,
@@ -27,7 +35,15 @@ export class VizslaLabElement extends LitElement {
     wasmBaseUrl: { type: String, attribute: "wasm-base-url" },
     vscodeAssetsUrl: { type: String, attribute: "vscode-assets-url" },
     height: { type: String },
+    theme: { type: String },
     docs: { type: Boolean, reflect: true },
+    project: { attribute: false },
+    activeFile: { type: String, attribute: "active-file" },
+    cursorLine: { type: Number, attribute: "cursor-line" },
+    cursorColumn: { type: Number, attribute: "cursor-column" },
+    selection: { type: String },
+    diagnosticsOpen: { type: Boolean, attribute: "diagnostics-open", reflect: true },
+    focusEditor: { type: Boolean, attribute: "focus-editor" },
   };
 
   static styles = vizslaLabStyles;
@@ -36,7 +52,15 @@ export class VizslaLabElement extends LitElement {
   declare wasmBaseUrl: string;
   declare vscodeAssetsUrl: string;
   declare height: string;
+  declare theme: "auto" | VizslaColorScheme;
   declare docs: boolean;
+  declare project: VizslaScenario | undefined;
+  declare activeFile: string;
+  declare cursorLine: number;
+  declare cursorColumn: number;
+  declare selection: string;
+  declare diagnosticsOpen: boolean;
+  declare focusEditor: boolean;
 
   private monaco?: typeof Monaco;
   private editor?: Monaco.editor.IStandaloneCodeEditor;
@@ -45,7 +69,8 @@ export class VizslaLabElement extends LitElement {
   private editorDisposables: Monaco.IDisposable[] = [];
   private fileStates = new Map<string, LabFileState>();
   private activeScenario: VizslaScenario = getScenario("counter");
-  private activeUri = workspaceUri(entryFile(this.activeScenario).path);
+  private readonly workspaceRootUri = `file:///workspace-${Math.random().toString(36).slice(2)}`;
+  private activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
   private diagnosticsByUri = new Map<string, LabDiagnostic[]>();
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
@@ -53,6 +78,11 @@ export class VizslaLabElement extends LitElement {
   private diagnosticTimer: number | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
+  private serverCapabilities: unknown;
+  private colorScheme: VizslaColorScheme = "dark";
+  private themeObserver?: MutationObserver;
+  private themeMediaQuery?: MediaQueryList;
+  private readonly handleThemeChange = () => this.syncColorScheme();
 
   constructor() {
     super();
@@ -60,14 +90,26 @@ export class VizslaLabElement extends LitElement {
     this.wasmBaseUrl = "/wasm/";
     this.vscodeAssetsUrl = "/vscode/";
     this.height = "";
+    this.theme = "auto";
     this.docs = false;
+    this.project = undefined;
+    this.activeFile = "";
+    this.cursorLine = 0;
+    this.cursorColumn = 1;
+    this.selection = "";
+    this.diagnosticsOpen = false;
+    this.focusEditor = false;
   }
 
   protected firstUpdated(): void {
-    this.activeScenario = getScenario(this.scenario);
-    this.activeUri = workspaceUri(entryFile(this.activeScenario).path);
+    this.activeScenario = this.resolvedScenario();
+    this.activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
+    this.inspectorOpen = this.diagnosticsOpen;
+    this.installThemeSync();
+    this.syncColorScheme();
     this.syncLabHeight();
     this.mountEditor();
+    this.applyConfiguredState();
     this.restartClient();
   }
 
@@ -76,8 +118,28 @@ export class VizslaLabElement extends LitElement {
       this.syncLabHeight();
     }
 
-    if (changed.has("scenario") && this.editor) {
-      this.setScenario(getScenario(this.scenario));
+    if (changed.has("theme")) {
+      this.syncColorScheme();
+    }
+
+    if ((changed.has("scenario") || changed.has("project")) && this.editor) {
+      this.setScenario(this.resolvedScenario(), changed.has("project"));
+    }
+
+    if (
+      this.editor &&
+      (changed.has("activeFile") ||
+        changed.has("cursorLine") ||
+        changed.has("cursorColumn") ||
+        changed.has("selection") ||
+        changed.has("focusEditor"))
+    ) {
+      this.applyConfiguredState();
+    }
+
+    if (changed.has("diagnosticsOpen") && this.inspectorOpen !== this.diagnosticsOpen) {
+      this.inspectorOpen = this.diagnosticsOpen;
+      this.requestUpdate();
     }
   }
 
@@ -89,14 +151,18 @@ export class VizslaLabElement extends LitElement {
     this.editor?.dispose();
     this.disposeModels();
     this.client?.dispose();
+    this.themeObserver?.disconnect();
+    this.removeThemeMediaListener();
   }
 
   protected render(): TemplateResult {
     return renderVizslaLabView(
       {
-        scenarios: SCENARIOS,
+        scenarios: this.availableScenarios(),
+        allowScenarioSelection: !this.project,
         activeScenario: this.activeScenario,
         activeUri: this.activeUri,
+        workspaceRootUri: this.workspaceRootUri,
         diagnosticsByUri: this.diagnosticsByUri,
         status: this.status,
         inspectorOpen: this.inspectorOpen,
@@ -125,7 +191,7 @@ export class VizslaLabElement extends LitElement {
     this.createModels(this.activeScenario);
     this.editor = this.monaco.editor.create(editorHost, {
       model: this.activeFileState()?.model,
-      theme: "vizsla-lab",
+      theme: vizslaThemeName(this.colorScheme),
       automaticLayout: true,
       fontFamily: "'Cascadia Code', 'SFMono-Regular', Consolas, monospace",
       fontSize: 14,
@@ -139,6 +205,26 @@ export class VizslaLabElement extends LitElement {
       hover: { enabled: true, delay: 250, sticky: true },
       "semanticHighlighting.enabled": true,
     });
+
+    this.editorDisposables.push(
+      this.monaco.editor.registerEditorOpener({
+        openCodeEditor: (source, resource, selectionOrPosition) => {
+          if (source !== this.editor) {
+            return false;
+          }
+
+          const target = this.fileStates.get(resource.toString());
+          if (!target || !this.editor) {
+            return false;
+          }
+
+          this.activateFile(target.uri);
+          this.revealLocation(selectionOrPosition);
+          this.editor.focus();
+          return true;
+        },
+      }),
+    );
 
     this.editorDisposables.push(
       this.editor.onDidChangeModelContent(() => {
@@ -170,11 +256,11 @@ export class VizslaLabElement extends LitElement {
     }
     this.disposeModels();
     for (const file of scenario.files) {
-      const uri = workspaceUri(file.path);
+      const uri = this.workspaceUri(file.path);
       const model = this.monaco.editor.createModel(file.source, languageIdForPath(file.path), this.monaco.Uri.parse(uri));
       this.fileStates.set(uri, { file, uri, version: 1, model, opened: false });
     }
-    this.activeUri = workspaceUri(entryFile(scenario).path);
+    this.activeUri = this.workspaceUri(entryFile(scenario).path);
   }
 
   private registerLanguageFeatures(serverCapabilities: unknown): void {
@@ -184,12 +270,13 @@ export class VizslaLabElement extends LitElement {
     }
 
     this.disposeLanguageFeatures();
-    syncVizslaSemanticTheme(this.monaco, serverCapabilities);
+    syncVizslaSemanticTheme(this.monaco, serverCapabilities, this.colorScheme);
     const commonOptions = {
       monaco: this.monaco,
       serverCapabilities,
       ownsModel: (model: Monaco.editor.ITextModel) => this.ownsSourceModel(model),
       uriForModel: (model: Monaco.editor.ITextModel) => model.uri.toString(),
+      diagnosticsForModel: (model: Monaco.editor.ITextModel) => this.diagnosticsByUri.get(model.uri.toString()) ?? [],
       request: async (method: string, params?: unknown) => {
         if (client !== this.client || !this.status.ready) {
           return null;
@@ -197,7 +284,7 @@ export class VizslaLabElement extends LitElement {
         try {
           return await client.request(method, params);
         } catch (error) {
-          if (client === this.client) {
+          if (client === this.client && !isClientDisposedError(error)) {
             console.warn(error instanceof Error ? error.message : "LSP request failed.");
           }
           return null;
@@ -217,8 +304,9 @@ export class VizslaLabElement extends LitElement {
     this.disposeLanguageFeatures();
     this.client?.dispose();
     const generation = ++this.clientGeneration;
-    const client = new VizslaBrowserClient(this.wasmBaseUrl);
+    const client = new VizslaBrowserClient(this.wasmBaseUrl, this.workspaceRootUri);
     this.client = client;
+    this.serverCapabilities = undefined;
     this.status = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
     client.onStatus = (status) => {
       if (generation !== this.clientGeneration || client !== this.client) {
@@ -227,6 +315,9 @@ export class VizslaLabElement extends LitElement {
       this.status = status;
       if (status.ready) {
         this.openSourceDocuments();
+        if (this.serverCapabilities) {
+          this.registerLanguageFeatures(this.serverCapabilities);
+        }
         this.scheduleDiagnostics(this.sourceUris(), false);
       }
       this.requestUpdate();
@@ -235,6 +326,7 @@ export class VizslaLabElement extends LitElement {
       if (generation !== this.clientGeneration || client !== this.client) {
         return;
       }
+      this.serverCapabilities = capabilities;
       if (this.status.ready) {
         this.registerLanguageFeatures(capabilities);
       }
@@ -333,6 +425,7 @@ export class VizslaLabElement extends LitElement {
     this.client?.dispose();
     this.client = undefined;
     this.clientGeneration += 1;
+    this.serverCapabilities = undefined;
     this.activeScenario = scenario;
     if (this.scenario !== scenario.id) {
       this.scenario = scenario.id;
@@ -341,6 +434,7 @@ export class VizslaLabElement extends LitElement {
     this.createModels(scenario);
     this.editor?.setModel(this.activeFileState()?.model ?? null);
     this.editor?.updateOptions({ readOnly: this.activeFileState()?.file.editable === false });
+    this.applyConfiguredState();
     this.restartClient();
     this.requestUpdate();
   }
@@ -370,6 +464,122 @@ export class VizslaLabElement extends LitElement {
     this.requestUpdate();
   }
 
+  private applyConfiguredState(): void {
+    this.applyConfiguredFile();
+    this.applyConfiguredSelection();
+    if (this.focusEditor) {
+      this.editor?.focus();
+    }
+  }
+
+  private applyConfiguredFile(): void {
+    const uri = this.configuredActiveUri();
+    if (!uri || uri === this.activeUri) {
+      return;
+    }
+    this.activateFile(uri);
+  }
+
+  private configuredActiveUri(): string | undefined {
+    if (!this.activeFile) {
+      return undefined;
+    }
+
+    let uri: string;
+    try {
+      uri = this.workspaceUri(normalizeWorkspacePath(this.activeFile));
+    } catch (error) {
+      console.warn(error instanceof Error ? error.message : "Invalid active-file value.");
+      return undefined;
+    }
+
+    if (!this.fileStates.has(uri)) {
+      console.warn(`active-file '${this.activeFile}' is not part of scenario '${this.activeScenario.id}'.`);
+      return undefined;
+    }
+
+    return uri;
+  }
+
+  private applyConfiguredSelection(): void {
+    if (!this.editor) {
+      return;
+    }
+
+    const range = this.configuredRange();
+    if (range) {
+      this.editor.setSelection(range);
+      this.editor.revealRangeInCenterIfOutsideViewport(range);
+      return;
+    }
+
+    if (this.cursorLine >= 1) {
+      const model = this.editor.getModel();
+      if (!model) {
+        return;
+      }
+      const position = model.validatePosition({
+        lineNumber: this.cursorLine,
+        column: Math.max(1, this.cursorColumn || 1),
+      });
+      this.editor.setPosition(position);
+      this.editor.revealLineInCenterIfOutsideViewport(position.lineNumber);
+    }
+  }
+
+  private revealLocation(selectionOrPosition: Monaco.IRange | Monaco.IPosition | undefined): void {
+    if (!this.editor || !this.monaco || !selectionOrPosition) {
+      return;
+    }
+
+    if ("startLineNumber" in selectionOrPosition) {
+      const range = new this.monaco.Range(
+        selectionOrPosition.startLineNumber,
+        selectionOrPosition.startColumn,
+        selectionOrPosition.endLineNumber,
+        selectionOrPosition.endColumn,
+      );
+      this.editor.setSelection(range);
+      this.editor.revealRangeInCenter(range);
+      return;
+    }
+
+    const position = {
+      lineNumber: selectionOrPosition.lineNumber,
+      column: selectionOrPosition.column,
+    };
+    this.editor.setPosition(position);
+    this.editor.revealPositionInCenter(position);
+  }
+
+  private configuredRange(): Monaco.Range | undefined {
+    if (!this.selection || !this.monaco || !this.editor) {
+      return undefined;
+    }
+
+    const match = /^(\d+):(\d+)-(\d+):(\d+)$/.exec(this.selection.trim());
+    if (!match) {
+      console.warn(`Invalid selection '${this.selection}'. Expected line:column-line:column.`);
+      return undefined;
+    }
+
+    const model = this.editor.getModel();
+    if (!model) {
+      return undefined;
+    }
+
+    const start = model.validatePosition({
+      lineNumber: Number(match[1]),
+      column: Number(match[2]),
+    });
+    const end = model.validatePosition({
+      lineNumber: Number(match[3]),
+      column: Number(match[4]),
+    });
+
+    return new this.monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+  }
+
   private revealDiagnostic(diagnostic: LabDiagnostic): void {
     const state = this.fileStates.get(diagnostic.uri);
     if (!state || !this.editor) {
@@ -392,16 +602,21 @@ export class VizslaLabElement extends LitElement {
 
   private onScenarioChange(event: Event): void {
     const select = event.currentTarget as HTMLSelectElement;
+    if (this.project && select.value !== this.project.id) {
+      this.project = undefined;
+    }
     this.setScenario(getScenario(select.value));
   }
 
   private toggleDiagnostics(): void {
     this.inspectorOpen = !this.inspectorOpen;
+    this.diagnosticsOpen = this.inspectorOpen;
     this.requestUpdate();
   }
 
   private closeInspector(): void {
     this.inspectorOpen = false;
+    this.diagnosticsOpen = false;
     this.requestUpdate();
   }
 
@@ -431,7 +646,22 @@ export class VizslaLabElement extends LitElement {
   }
 
   private sourceUris(): string[] {
-    return sourceFiles(this.activeScenario).map((file) => workspaceUri(file.path));
+    return sourceFiles(this.activeScenario).map((file) => this.workspaceUri(file.path));
+  }
+
+  private workspaceUri(path: string): string {
+    return workspaceUri(path, this.workspaceRootUri);
+  }
+
+  private resolvedScenario(): VizslaScenario {
+    return this.project ?? getScenario(this.scenario);
+  }
+
+  private availableScenarios(): VizslaScenario[] {
+    if (!this.project || SCENARIOS.some((scenario) => scenario.id === this.project?.id)) {
+      return SCENARIOS;
+    }
+    return [this.project, ...SCENARIOS];
   }
 
   private clearDiagnosticTimer(): void {
@@ -441,8 +671,67 @@ export class VizslaLabElement extends LitElement {
     }
   }
 
+  private installThemeSync(): void {
+    if (typeof document !== "undefined") {
+      this.themeObserver = new MutationObserver(this.handleThemeChange);
+      this.themeObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "data-theme"],
+      });
+    }
+
+    if (typeof window !== "undefined" && "matchMedia" in window) {
+      this.themeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      this.themeMediaQuery.addEventListener("change", this.handleThemeChange);
+    }
+  }
+
+  private removeThemeMediaListener(): void {
+    if (!this.themeMediaQuery) {
+      return;
+    }
+
+    this.themeMediaQuery.removeEventListener("change", this.handleThemeChange);
+  }
+
+  private syncColorScheme(): void {
+    const colorScheme = this.resolveColorScheme();
+    if (this.colorScheme === colorScheme && this.getAttribute("data-theme") === colorScheme) {
+      return;
+    }
+
+    this.colorScheme = colorScheme;
+    this.setAttribute("data-theme", colorScheme);
+    if (this.monaco) {
+      setVizslaMonacoTheme(this.monaco, colorScheme);
+    }
+    this.requestUpdate();
+  }
+
+  private resolveColorScheme(): VizslaColorScheme {
+    if (this.theme === "light" || this.theme === "dark") {
+      return this.theme;
+    }
+
+    if (typeof document !== "undefined") {
+      const root = document.documentElement;
+      const declaredTheme = (root.dataset.theme ?? root.getAttribute("data-theme") ?? "").toLowerCase();
+      if (declaredTheme === "light" || declaredTheme === "dark") {
+        return declaredTheme;
+      }
+      if (root.classList.contains("dark")) {
+        return "dark";
+      }
+      if (root.classList.contains("light")) {
+        return "light";
+      }
+    }
+
+    return this.themeMediaQuery?.matches ? "dark" : "light";
+  }
+
   private syncLabHeight(): void {
-    this.style.setProperty("--vzlab-height", this.height || (this.docs ? "620px" : "100dvh"));
+    this.style.setProperty("--vzlab-height", this.height || (this.docs ? "430px" : "100dvh"));
   }
 
   private disposeModels(): void {

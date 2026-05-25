@@ -7,6 +7,7 @@ export const vizslaLabStyles: CSSResultGroup = [
     :host {
       display: block;
       color: #09090b;
+      color-scheme: light;
       font-family:
         "Aptos",
         "Segoe UI",
@@ -15,10 +16,11 @@ export const vizslaLabStyles: CSSResultGroup = [
       --vzlab-height: 100dvh;
       --vzlab-background: #fafafa;
       --vzlab-panel: #ffffff;
-      --vzlab-editor: #0a0a0a;
+      --vzlab-editor: #ffffff;
       --vzlab-border: #e4e4e7;
       --vzlab-border-strong: #d4d4d8;
       --vzlab-muted: #71717a;
+      --vzlab-message: #3f3f46;
       --vzlab-muted-surface: #f4f4f5;
       --vzlab-accent: #18181b;
       --vzlab-ring: #a1a1aa;
@@ -27,8 +29,26 @@ export const vizslaLabStyles: CSSResultGroup = [
       --vzlab-success: #16a34a;
     }
 
+    :host([data-theme="dark"]) {
+      color: #fafafa;
+      color-scheme: dark;
+      --vzlab-background: #09090b;
+      --vzlab-panel: #09090b;
+      --vzlab-editor: #0a0a0a;
+      --vzlab-border: #27272a;
+      --vzlab-border-strong: #3f3f46;
+      --vzlab-muted: #a1a1aa;
+      --vzlab-message: #d4d4d8;
+      --vzlab-muted-surface: #18181b;
+      --vzlab-accent: #fafafa;
+      --vzlab-ring: #71717a;
+      --vzlab-danger: #f87171;
+      --vzlab-warning: #fbbf24;
+      --vzlab-success: #22c55e;
+    }
+
     :host([docs]) {
-      --vzlab-height: 620px;
+      --vzlab-height: 430px;
     }
 
     :host,
@@ -99,6 +119,31 @@ export const vizslaLabStyles: CSSResultGroup = [
     .monaco-editor .reference-zone-widget .monaco-icon-label .label-description,
     .monaco-editor .reference-zone-widget .count {
       font-size: 12px;
+    }
+
+    .monaco-editor .action-widget {
+      width: min(520px, calc(100vw - 32px)) !important;
+      min-width: min(360px, calc(100vw - 32px));
+      padding: 4px;
+      border-color: var(--vzlab-border-strong) !important;
+      border-radius: 8px;
+      box-shadow:
+        0 12px 28px rgba(24, 24, 27, 0.14),
+        0 2px 8px rgba(24, 24, 27, 0.08);
+    }
+
+    .monaco-editor .action-widget .monaco-list-row.action {
+      min-height: 28px;
+      padding: 0 8px;
+    }
+
+    .monaco-editor .action-widget .monaco-list-row.action .title {
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .monaco-editor .action-widget .monaco-list .monaco-list-row .description {
+      font-size: 11px;
     }
 
     .workspace-row {
@@ -281,16 +326,17 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .status {
+      width: 28px;
       height: 28px;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      padding: 0 8px;
+      justify-content: center;
+      padding: 0;
       border: 1px solid var(--vzlab-border);
       border-radius: 999px;
       background: var(--vzlab-panel);
-      color: var(--vzlab-muted);
-      white-space: nowrap;
+      color: var(--vzlab-warning);
+      flex: 0 0 auto;
     }
 
     .status.is-ready {
@@ -298,8 +344,8 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .status-dot {
-      width: 6px;
-      height: 6px;
+      width: 8px;
+      height: 8px;
       border-radius: 999px;
       background: currentColor;
     }
@@ -413,7 +459,7 @@ export const vizslaLabStyles: CSSResultGroup = [
     .diagnostic p {
       min-width: 0;
       margin: 0;
-      color: #3f3f46;
+      color: var(--vzlab-message);
       font-size: 12px;
       line-height: 1.35;
       overflow: hidden;

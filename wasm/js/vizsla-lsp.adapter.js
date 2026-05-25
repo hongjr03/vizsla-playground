@@ -1,12 +1,15 @@
 import createVizslaModule from "./vizsla-core.js";
 
 export async function createVizslaLspEngine(options = {}) {
+  const assetSearch = new URL(import.meta.url).search;
   const module = await createVizslaModule({
     locateFile(path) {
-      return new URL(path.endsWith(".wasm") ? "vizsla-core.wasm" : path, import.meta.url).href;
+      const url = new URL(path.endsWith(".wasm") ? "vizsla-core.wasm" : path, import.meta.url);
+      url.search = assetSearch;
+      return url.href;
     },
   });
-  writeWorkspace(module, options.workspaceFiles ?? []);
+  writeWorkspace(module, options.rootUri ?? "file:///workspace", options.workspaceFiles ?? []);
 
   return {
     send(message) {
@@ -33,10 +36,11 @@ function drainMessages(module, initialMessages) {
   return messages;
 }
 
-function writeWorkspace(module, files) {
+function writeWorkspace(module, rootUri, files) {
   if (!Array.isArray(files)) {
     throw new Error("workspaceFiles must be an array.");
   }
+  const rootPath = pathFromFileUri(rootUri);
   for (const file of files) {
     if (!file || typeof file.path !== "string" || typeof file.text !== "string") {
       throw new Error("workspaceFiles entries must contain path and text.");
@@ -45,8 +49,17 @@ function writeWorkspace(module, files) {
     if (normalized.includes("..")) {
       throw new Error(`Refusing workspace path outside /workspace: ${file.path}`);
     }
-    callVoid(module, "vizsla_lsp_write_file", `/workspace/${normalized}`, file.text);
+    callVoid(module, "vizsla_lsp_write_file", `${rootPath}/${normalized}`, file.text);
   }
+}
+
+function pathFromFileUri(uri) {
+  const url = new URL(uri);
+  if (url.protocol !== "file:") {
+    throw new Error(`Unsupported workspace root URI: ${uri}`);
+  }
+  const path = decodeURIComponent(url.pathname).replace(/\/+$/, "");
+  return path || "/workspace";
 }
 
 function callJson(module, name, payload) {

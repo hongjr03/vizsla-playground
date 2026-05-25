@@ -5,10 +5,16 @@ import onigWasm from "vscode-oniguruma/release/onig.wasm?url";
 import { INITIAL, parseRawGrammar, Registry, type IOnigLib, type StateStack } from "vscode-textmate";
 
 let configured = false;
+let cancellationBoundaryInstalled = false;
 let onigLibPromise: Promise<IOnigLib> | null = null;
+let semanticTokenTypes: string[] = [];
+let activeColorScheme: VizslaColorScheme = "dark";
+
+export type VizslaColorScheme = "light" | "dark";
 
 export function configureMonaco(): typeof monaco {
   if (!configured) {
+    installExpectedCancellationBoundary();
     installShadowCaretRangeFromPoint();
 
     self.MonacoEnvironment = {
@@ -28,7 +34,7 @@ export function configureMonaco(): typeof monaco {
       aliases: ["Verilog", "verilog"],
     });
 
-    defineVizslaTheme(monaco, []);
+    defineVizslaThemes(monaco, []);
 
     configured = true;
   }
@@ -36,21 +42,54 @@ export function configureMonaco(): typeof monaco {
   return monaco;
 }
 
+function installExpectedCancellationBoundary(): void {
+  if (cancellationBoundaryInstalled || typeof window === "undefined") {
+    return;
+  }
+  cancellationBoundaryInstalled = true;
+
+  const preventIfExpectedCancellation = (event: ErrorEvent | PromiseRejectionEvent) => {
+    const error = "reason" in event ? event.reason : event.error;
+    if (isExpectedMonacoCancellation(error)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  };
+
+  window.addEventListener("error", preventIfExpectedCancellation, true);
+  window.addEventListener("unhandledrejection", preventIfExpectedCancellation, true);
+}
+
+function isExpectedMonacoCancellation(error: unknown): boolean {
+  return error instanceof Error && error.name === "Canceled" && error.message === "Canceled";
+}
+
 export function syncVizslaSemanticTheme(
   monacoModule: typeof monaco,
   serverCapabilities: unknown,
+  colorScheme: VizslaColorScheme = activeColorScheme,
 ): void {
-  defineVizslaTheme(monacoModule, semanticTokenTypesFromCapabilities(serverCapabilities));
-  monacoModule.editor.setTheme("vizsla-lab");
+  semanticTokenTypes = semanticTokenTypesFromCapabilities(serverCapabilities);
+  defineVizslaThemes(monacoModule, semanticTokenTypes);
+  setVizslaMonacoTheme(monacoModule, colorScheme);
 }
 
-function defineVizslaTheme(monacoModule: typeof monaco, semanticTokenTypes: readonly string[]): void {
+export function setVizslaMonacoTheme(monacoModule: typeof monaco, colorScheme: VizslaColorScheme): void {
+  activeColorScheme = colorScheme;
+  monacoModule.editor.setTheme(vizslaThemeName(colorScheme));
+}
+
+export function vizslaThemeName(colorScheme: VizslaColorScheme): string {
+  return colorScheme === "dark" ? "vizsla-lab-dark" : "vizsla-lab-light";
+}
+
+function defineVizslaThemes(monacoModule: typeof monaco, semanticTokenTypes: readonly string[]): void {
   const semanticModifierRules = Array.from(new Set(semanticTokenTypes)).flatMap((tokenType) => [
     { token: `${tokenType}.read`, fontStyle: "bold" },
     { token: `${tokenType}.write`, fontStyle: "bold underline" },
   ]);
 
-  monacoModule.editor.defineTheme("vizsla-lab", {
+  monacoModule.editor.defineTheme("vizsla-lab-dark", {
     base: "vs-dark",
     inherit: true,
     rules: [
@@ -70,6 +109,29 @@ function defineVizslaTheme(monacoModule: typeof monaco, semanticTokenTypes: read
       "editorGutter.background": "#0a0a0a",
       "editorLineNumber.activeForeground": "#fafafa",
       "editor.lineHighlightBackground": "#18181b",
+    },
+  });
+
+  monacoModule.editor.defineTheme("vizsla-lab-light", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "keyword", foreground: "2563eb" },
+      { token: "keyword.preprocessor", foreground: "b45309" },
+      { token: "type.identifier", foreground: "0f766e" },
+      { token: "number", foreground: "dc2626" },
+      ...semanticModifierRules,
+    ],
+    colors: {
+      "editor.background": "#ffffff",
+      "editor.foreground": "#18181b",
+      "editorLineNumber.foreground": "#a1a1aa",
+      "editorCursor.foreground": "#09090b",
+      "editor.selectionBackground": "#d4d4d8",
+      "editor.inactiveSelectionBackground": "#e4e4e7",
+      "editorGutter.background": "#ffffff",
+      "editorLineNumber.activeForeground": "#18181b",
+      "editor.lineHighlightBackground": "#f4f4f5",
     },
   });
 }

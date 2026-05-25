@@ -5,6 +5,13 @@ interface Props {
   docs?: boolean;
   wasmBaseUrl?: string;
   vscodeAssetsUrl?: string;
+  activeFile?: string;
+  cursorLine?: number;
+  cursorColumn?: number;
+  selection?: string;
+  diagnosticsOpen?: boolean;
+  focusEditor?: boolean;
+  theme?: "auto" | "light" | "dark";
 }
 
 const {
@@ -13,6 +20,13 @@ const {
   docs = false,
   wasmBaseUrl = assetPath("wasm/"),
   vscodeAssetsUrl = assetPath("vscode/"),
+  activeFile,
+  cursorLine,
+  cursorColumn,
+  selection,
+  diagnosticsOpen = false,
+  focusEditor = false,
+  theme = "auto",
 } = Astro.props;
 
 function assetPath(path: string): string {
@@ -31,15 +45,29 @@ function assetPath(path: string): string {
       docs
       scenario={scenario}
       height={height}
+      theme={theme}
       wasm-base-url={wasmBaseUrl}
       vscode-assets-url={vscodeAssetsUrl}
+      active-file={activeFile}
+      cursor-line={cursorLine}
+      cursor-column={cursorColumn}
+      selection={selection}
+      diagnostics-open={diagnosticsOpen}
+      focus-editor={focusEditor}
     ></vizsla-lab>
   ) : (
     <vizsla-lab
       scenario={scenario}
       height={height}
+      theme={theme}
       wasm-base-url={wasmBaseUrl}
       vscode-assets-url={vscodeAssetsUrl}
+      active-file={activeFile}
+      cursor-line={cursorLine}
+      cursor-column={cursorColumn}
+      selection={selection}
+      diagnostics-open={diagnosticsOpen}
+      focus-editor={focusEditor}
     ></vizsla-lab>
   )
 }

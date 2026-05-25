@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { repoRoot, run } from "./script-utils.mjs";
 
@@ -24,13 +24,11 @@ run(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["build:embed"]);
 const docsPublic = resolve(vizslaRoot, "docs", "public", "vizsla-lab");
 const docsComponents = resolve(vizslaRoot, "docs", "src", "components");
 const docsContent = resolve(vizslaRoot, "docs", "src", "content", "docs");
-mkdirSync(docsPublic, { recursive: true });
 mkdirSync(docsComponents, { recursive: true });
 mkdirSync(docsContent, { recursive: true });
 
+rmSync(docsPublic, { recursive: true, force: true });
 cpSync(resolve(repoRoot, "dist", "embed"), docsPublic, { recursive: true, force: true });
-cpSync(resolve(repoRoot, "public", "wasm"), resolve(docsPublic, "wasm"), { recursive: true, force: true });
-cpSync(resolve(repoRoot, "public", "vscode"), resolve(docsPublic, "vscode"), { recursive: true, force: true });
 
 writeFileSync(
   resolve(docsComponents, "VizslaLab.astro"),

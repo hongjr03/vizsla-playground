@@ -6,11 +6,19 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+const CLIENT_DISPOSED_MESSAGE = "Vizsla LSP client has been disposed.";
+
+export function isClientDisposedError(error: unknown): boolean {
+  return error instanceof Error && error.message === CLIENT_DISPOSED_MESSAGE;
+}
+
 export class VizslaBrowserClient {
   private readonly worker = new VizslaWorker();
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
   private readonly wasmBaseUrl: string;
+  private readonly rootUri: string;
+  private disposed = false;
 
   onStatus: (status: WorkerStatus) => void = () => undefined;
   onServerCapabilities: (capabilities: unknown) => void = () => undefined;
@@ -18,15 +26,16 @@ export class VizslaBrowserClient {
   onTrace: (entry: LspTraceEntry) => void = () => undefined;
   onLog: (message: string, level: "info" | "warn" | "error") => void = () => undefined;
 
-  constructor(wasmBaseUrl = "/wasm/") {
+  constructor(wasmBaseUrl = "/wasm/", rootUri = "file:///workspace") {
     this.wasmBaseUrl = new URL(wasmBaseUrl, window.location.href).href;
+    this.rootUri = rootUri;
     this.worker.addEventListener("message", (event: MessageEvent<WorkerResponse>) => {
       this.handleMessage(event.data);
     });
   }
 
   start(workspaceFiles: WorkerWorkspaceFile[]): void {
-    this.post({ kind: "boot", wasmBaseUrl: this.wasmBaseUrl, workspaceFiles });
+    this.post({ kind: "boot", wasmBaseUrl: this.wasmBaseUrl, rootUri: this.rootUri, workspaceFiles });
   }
 
   notify(method: string, params?: unknown): void {
@@ -53,6 +62,9 @@ export class VizslaBrowserClient {
   }
 
   request(method: string, params?: unknown): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error(CLIENT_DISPOSED_MESSAGE));
+    }
     const requestId = this.nextRequestId++;
     this.post({ kind: "lspRequest", method, params, requestId });
     return new Promise((resolve, reject) => {
@@ -61,11 +73,21 @@ export class VizslaBrowserClient {
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    for (const request of this.pending.values()) {
+      request.reject(new Error(CLIENT_DISPOSED_MESSAGE));
+    }
     this.worker.terminate();
     this.pending.clear();
   }
 
   private post(message: WorkerRequest): void {
+    if (this.disposed) {
+      return;
+    }
     this.worker.postMessage(message);
   }
 

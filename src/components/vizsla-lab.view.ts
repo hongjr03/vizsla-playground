@@ -6,8 +6,10 @@ import { renderIcon as icon } from "./icons";
 
 interface VizslaLabViewState {
   scenarios: readonly VizslaScenario[];
+  allowScenarioSelection: boolean;
   activeScenario: VizslaScenario;
   activeUri: string;
+  workspaceRootUri: string;
   diagnosticsByUri: ReadonlyMap<string, LabDiagnostic[]>;
   status: WorkerStatus;
   inspectorOpen: boolean;
@@ -27,6 +29,7 @@ interface VizslaLabViewActions {
 
 export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLabViewActions): TemplateResult {
   const diagnostics = allDiagnostics(state);
+  const statusLabel = state.status.ready ? "Ready" : "Starting";
   return html`
     <section class="shell" aria-label="Vizsla Lab">
       <div class="body">
@@ -36,17 +39,21 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
               ${state.activeScenario.files.map((file) => renderFileTab(file, state, actions))}
             </div>
             <div class="toolbar">
-              <label class="select">
-                <span>Scenario</span>
-                <select @change=${actions.onScenarioChange}>
-                  ${state.scenarios.map(
-                    (scenario) =>
-                      html`<option value=${scenario.id} ?selected=${scenario.id === state.activeScenario.id}>
-                        ${scenario.label}
-                      </option>`,
-                  )}
-                </select>
-              </label>
+              ${state.allowScenarioSelection
+                ? html`
+                    <label class="select">
+                      <span>Scenario</span>
+                      <select @change=${actions.onScenarioChange}>
+                        ${state.scenarios.map(
+                          (scenario) =>
+                            html`<option value=${scenario.id} ?selected=${scenario.id === state.activeScenario.id}>
+                              ${scenario.label}
+                            </option>`,
+                        )}
+                      </select>
+                    </label>
+                  `
+                : null}
               <button
                 class=${state.inspectorOpen ? "diagnostics-toggle is-active" : "diagnostics-toggle"}
                 type="button"
@@ -64,9 +71,13 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
               >
                 ${icon(RefreshCw)}
               </button>
-              <div class=${state.status.ready ? "status is-ready" : "status"} title=${state.status.detail}>
+              <div
+                class=${state.status.ready ? "status is-ready" : "status"}
+                title=${state.status.detail}
+                role="status"
+                aria-label=${`Vizsla ${statusLabel}: ${state.status.detail}`}
+              >
                 <span class="status-dot"></span>
-                <strong>${state.status.ready ? "Ready" : "Starting"}</strong>
               </div>
               <button type="button" @click=${actions.resetScenario} title="Reset workspace">${icon(FileCode2)}</button>
               <button type="button" @click=${actions.copySource} title="Copy current file">${icon(ClipboardCopy)}</button>
@@ -98,7 +109,7 @@ function renderFileTab(
   state: VizslaLabViewState,
   actions: VizslaLabViewActions,
 ): TemplateResult {
-  const uri = workspaceUri(file.path);
+  const uri = workspaceUri(file.path, state.workspaceRootUri);
   const diagnostics = state.diagnosticsByUri.get(uri) ?? [];
   const classes = [
     uri === state.activeUri ? "is-active" : "",

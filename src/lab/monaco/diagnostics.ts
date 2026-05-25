@@ -22,6 +22,7 @@ export function diagnosticsFromLspReport(result: unknown, uri: string, filePath:
       title: diagnosticName ?? source,
       code: diagnosticName ?? rawCode,
       rawCode,
+      data: diagnostic.data,
       message: diagnostic.message,
     };
   });

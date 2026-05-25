@@ -16,6 +16,7 @@ let traceId = 1;
 let lspId = 1;
 let pendingNotifications: LspNotification[] = [];
 let pollTimer: number | undefined;
+let rootUri = "file:///workspace";
 const pendingClientRequests = new Map<number | string, PendingClientRequest>();
 
 self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
@@ -32,7 +33,7 @@ async function handleRequest(message: WorkerRequest): Promise<void> {
   switch (message.kind) {
     case "boot":
       trace("client", "initialize", `${message.workspaceFiles.length} workspace files`);
-      await boot(message.wasmBaseUrl, message.workspaceFiles);
+      await boot(message.wasmBaseUrl, message.rootUri, message.workspaceFiles);
       post({ kind: "status", status });
       if (serverCapabilities) {
         post({ kind: "serverCapabilities", capabilities: serverCapabilities });
@@ -67,13 +68,14 @@ async function handleRequest(message: WorkerRequest): Promise<void> {
   }
 }
 
-async function boot(wasmBaseUrl: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<void> {
+async function boot(wasmBaseUrl: string, requestedRootUri: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<void> {
   try {
     clearPendingClientRequests("Vizsla LSP is restarting.");
-    engine = await loadWasmEngine(wasmBaseUrl, workspaceFiles);
+    rootUri = normalizeRootUri(requestedRootUri);
+    engine = await loadWasmEngine(wasmBaseUrl, rootUri, workspaceFiles);
     const initialize = sendImmediateLspRequest("initialize", {
       processId: null,
-      rootUri: "file:///workspace",
+      rootUri,
       capabilities: browserClientCapabilities(),
       initializationOptions: browserInitializationOptions(),
       trace: "off",
@@ -102,12 +104,14 @@ async function boot(wasmBaseUrl: string, workspaceFiles: WorkerWorkspaceFile[]):
   }
 }
 
-async function loadWasmEngine(wasmBaseUrl: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<WasmEngine> {
+async function loadWasmEngine(wasmBaseUrl: string, rootUri: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<WasmEngine> {
   const baseUrl = new URL(wasmBaseUrl.endsWith("/") ? wasmBaseUrl : `${wasmBaseUrl}/`, self.location.href);
   const moduleUrl = new URL("vizsla-lsp.js", baseUrl);
+  moduleUrl.search = baseUrl.search;
   const loaded = (await import(/* @vite-ignore */ moduleUrl.href)) as {
     createVizslaLspEngine?: (options: {
       wasmBaseUrl: string;
+      rootUri: string;
       workspaceFiles: WorkerWorkspaceFile[];
     }) => Promise<WasmEngine>;
   };
@@ -116,7 +120,7 @@ async function loadWasmEngine(wasmBaseUrl: string, workspaceFiles: WorkerWorkspa
     throw new Error("Vizsla WASM adapter did not export createVizslaLspEngine().");
   }
 
-  return loaded.createVizslaLspEngine({ wasmBaseUrl: baseUrl.href, workspaceFiles });
+  return loaded.createVizslaLspEngine({ wasmBaseUrl: baseUrl.href, rootUri, workspaceFiles });
 }
 
 function requireEngine(): WasmEngine {
@@ -310,4 +314,8 @@ function trace(direction: "client" | "server", method: string, detail: string): 
 
 function post(response: WorkerResponse): void {
   self.postMessage(response);
+}
+
+function normalizeRootUri(uri: string): string {
+  return uri.replace(/\/+$/, "");
 }

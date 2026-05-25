@@ -34,6 +34,7 @@ export interface LabDiagnostic {
   title: string;
   code?: string;
   rawCode?: string;
+  data?: unknown;
   message: string;
 }
 
@@ -56,7 +57,7 @@ export interface WorkerWorkspaceFile {
 }
 
 export type WorkerRequest =
-  | { kind: "boot"; wasmBaseUrl: string; workspaceFiles: WorkerWorkspaceFile[] }
+  | { kind: "boot"; wasmBaseUrl: string; rootUri: string; workspaceFiles: WorkerWorkspaceFile[] }
   | { kind: "lspNotification"; method: string; params?: unknown }
   | { kind: "lspRequest"; method: string; params?: unknown; requestId: number };
 

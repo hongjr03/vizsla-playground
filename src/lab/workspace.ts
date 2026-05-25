@@ -1,7 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import type { VizslaScenario, VizslaScenarioFile, WorkerWorkspaceFile } from "../types";
 
-export const WORKSPACE_ROOT_URI = "file:///workspace";
+export const DEFAULT_WORKSPACE_ROOT_URI = "file:///workspace";
 
 const SOURCE_EXTENSIONS = new Set([".v", ".vh", ".sv", ".svh", ".svi"]);
 
@@ -28,12 +28,12 @@ export function sourceFiles(scenario: VizslaScenario): VizslaScenarioFile[] {
   return scenario.files.filter((file) => isSourceFile(file.path));
 }
 
-export function workspaceUri(path: string): string {
-  return `${WORKSPACE_ROOT_URI}/${normalizeWorkspacePath(path).split("/").map(encodeURIComponent).join("/")}`;
+export function workspaceUri(path: string, rootUri = DEFAULT_WORKSPACE_ROOT_URI): string {
+  return `${normalizeRootUri(rootUri)}/${normalizeWorkspacePath(path).split("/").map(encodeURIComponent).join("/")}`;
 }
 
-export function pathFromWorkspaceUri(uri: string): string {
-  const prefix = `${WORKSPACE_ROOT_URI}/`;
+export function pathFromWorkspaceUri(uri: string, rootUri = DEFAULT_WORKSPACE_ROOT_URI): string {
+  const prefix = `${normalizeRootUri(rootUri)}/`;
   if (!uri.startsWith(prefix)) {
     return uri;
   }
@@ -71,6 +71,10 @@ export function normalizeWorkspacePath(path: string): string {
     throw new Error(`Invalid workspace path: ${path}`);
   }
   return parts.join("/");
+}
+
+export function normalizeRootUri(rootUri: string): string {
+  return rootUri.replace(/\/+$/, "");
 }
 
 function extension(path: string): string {

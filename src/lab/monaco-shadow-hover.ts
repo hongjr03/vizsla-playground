@@ -1,14 +1,14 @@
 import type * as Monaco from "monaco-editor";
 
 const HOVER_DELAY_MS = 260;
-const HOVER_HIDE_DELAY_MS = 220;
+const HOVER_HIDE_DELAY_MS = 320;
 const HOVER_START_MODE_IMMEDIATE = 1;
-const HOVER_START_SOURCE_KEYBOARD = 1;
+const HOVER_START_SOURCE_MOUSE = 0;
 
 interface HoverBridgeOptions {
   monaco: typeof Monaco;
   editor: Monaco.editor.IStandaloneCodeEditor;
-  root: { elementFromPoint(x: number, y: number): Element | null };
+  root: ShadowRoot;
   ownsModel(model: Monaco.editor.ITextModel): boolean;
 }
 
@@ -24,10 +24,27 @@ interface ContentHoverWidgetWrapper {
   isVisible?: boolean;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
 export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco.IDisposable {
   let showTimer: number | undefined;
   let hideTimer: number | undefined;
-  let lastPoint: { x: number; y: number } | undefined;
+  let lastPoint: Point | undefined;
+
+  const controller = (): ContentHoverController | null =>
+    options.editor.getContribution("editor.contrib.contentHover") as ContentHoverController | null;
+
+  const hoverWidget = (): ContentHoverWidgetWrapper | null => controller()?._contentWidget ?? null;
+
+  const setKeepOpen = (keepOpen: boolean) => {
+    const contentHoverController = controller();
+    if (contentHoverController) {
+      contentHoverController.shouldKeepOpenOnEditorMouseMoveOrLeave = keepOpen;
+    }
+  };
 
   const clearShowTimer = () => {
     if (showTimer !== undefined) {
@@ -43,87 +60,73 @@ export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco
     }
   };
 
-  const controller = (): ContentHoverController | null =>
-    options.editor.getContribution("editor.contrib.contentHover") as ContentHoverController | null;
-
-  const contentHoverWidget = (): ContentHoverWidgetWrapper | null => controller()?._contentWidget ?? null;
-
-  const setNativeHoverKeepOpen = (keepOpen: boolean) => {
-    const contentHoverController = controller();
-    if (contentHoverController) {
-      contentHoverController.shouldKeepOpenOnEditorMouseMoveOrLeave = keepOpen;
-    }
-  };
-
-  const pointInsideEditor = (point: { x: number; y: number } | undefined): boolean => {
-    if (!point) {
-      return false;
-    }
-    const editorDom = options.editor.getDomNode();
-    if (!editorDom) {
-      return false;
-    }
-    const rect = editorDom.getBoundingClientRect();
-    if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) {
-      return false;
-    }
-    const topElement = options.root.elementFromPoint(point.x, point.y);
-    return topElement !== null && editorDom.contains(topElement);
-  };
-
-  const pointInsideElement = (point: { x: number; y: number } | undefined, element: HTMLElement | null): boolean => {
+  const pointInsideRect = (point: Point | undefined, element: HTMLElement | null): boolean => {
     if (!point || !element) {
       return false;
     }
     const rect = element.getBoundingClientRect();
-    if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom) {
-      return false;
-    }
-    const topElement = options.root.elementFromPoint(point.x, point.y);
-    return topElement !== null && element.contains(topElement);
+    return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
   };
 
-  const pointInsideHover = (point: { x: number; y: number } | undefined): boolean =>
-    pointInsideElement(point, contentHoverWidget()?.getDomNode() ?? null);
+  const pointInsideEditor = (point: Point | undefined): boolean => {
+    return pointInsideRect(point, options.editor.getDomNode());
+  };
 
-  const pointInsideInteractiveArea = (point: { x: number; y: number } | undefined): boolean =>
-    pointInsideEditor(point) || pointInsideHover(point);
+  const pointInsideHover = (point: Point | undefined): boolean => {
+    return pointInsideRect(point, hoverWidget()?.getDomNode() ?? null);
+  };
+
+  const pointInsideInteractiveArea = (point: Point | undefined): boolean => pointInsideEditor(point) || pointInsideHover(point);
 
   const hideHover = () => {
-    contentHoverWidget()?.hide();
-    setNativeHoverKeepOpen(false);
+    hoverWidget()?.hide();
+    setKeepOpen(false);
   };
 
-  const scheduleHideIfOutsideInteractiveArea = (point: { x: number; y: number }) => {
-    if (pointInsideEditor(point) || pointInsideHover(point)) {
+  const scheduleHideIfOutsideInteractiveArea = (point: Point | undefined) => {
+    if (pointInsideInteractiveArea(point)) {
       clearHideTimer();
-      setNativeHoverKeepOpen(true);
       return;
     }
 
     clearHideTimer();
+    setKeepOpen(true);
     hideTimer = window.setTimeout(() => {
       hideTimer = undefined;
-      if (!pointInsideInteractiveArea(lastPoint)) {
+      if (!pointInsideInteractiveArea(point)) {
         hideHover();
       }
     }, HOVER_HIDE_DELAY_MS);
   };
 
-  const document = options.editor.getDomNode()?.ownerDocument ?? globalThis.document;
-  const documentMouseMove = (event: MouseEvent) => {
-    const point = { x: event.clientX, y: event.clientY };
-    lastPoint = point;
-    if (contentHoverWidget()?.isVisible) {
+  const syncKeepOpen = (point: Point) => {
+    if (pointInsideHover(point)) {
+      clearHideTimer();
+      clearShowTimer();
+      setKeepOpen(true);
+      return;
+    }
+
+    if (pointInsideEditor(point)) {
+      clearHideTimer();
+      setKeepOpen(false);
+      return;
+    }
+
+    if (hoverWidget()?.isVisible) {
       scheduleHideIfOutsideInteractiveArea(point);
     }
   };
-  document.addEventListener("mousemove", documentMouseMove, true);
 
-  const mouseMove = options.editor.onMouseMove((event) => {
-    lastPoint = { x: event.event.posx, y: event.event.posy };
-    if (event.target.type !== options.monaco.editor.MouseTargetType.CONTENT_TEXT || !event.target.range) {
-      if (!contentHoverWidget()?.isVisible) {
+  const scheduleHoverAtPoint = (point: Point) => {
+    if (!pointInsideEditor(point)) {
+      clearShowTimer();
+      return;
+    }
+
+    const target = options.editor.getTargetAtClientPoint(point.x, point.y);
+    if (target?.type !== options.monaco.editor.MouseTargetType.CONTENT_TEXT || !target.range) {
+      if (!hoverWidget()?.isVisible) {
         clearShowTimer();
       }
       return;
@@ -135,43 +138,33 @@ export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco
       return;
     }
 
-    const range = event.target.range;
     clearShowTimer();
     clearHideTimer();
-    setNativeHoverKeepOpen(true);
+    setKeepOpen(false);
+    const range = target.range;
     showTimer = window.setTimeout(() => {
       showTimer = undefined;
-      if (!pointInsideInteractiveArea(lastPoint)) {
-        setNativeHoverKeepOpen(false);
-        return;
+      if (lastPoint && pointInsideEditor(lastPoint)) {
+        controller()?.showContentHover(range, HOVER_START_MODE_IMMEDIATE, HOVER_START_SOURCE_MOUSE, false);
+        setKeepOpen(true);
       }
-
-      const contentHoverController = controller();
-      setNativeHoverKeepOpen(true);
-      contentHoverController?.showContentHover(range, HOVER_START_MODE_IMMEDIATE, HOVER_START_SOURCE_KEYBOARD, false);
     }, HOVER_DELAY_MS);
-  });
+  };
 
-  const mouseLeave = options.editor.onMouseLeave((event) => {
-    const point = { x: event.event.posx, y: event.event.posy };
-    lastPoint = point;
-    if (!pointInsideHover(point)) {
-      if (contentHoverWidget()?.isVisible) {
-        scheduleHideIfOutsideInteractiveArea(point);
-      } else if (showTimer === undefined && !pointInsideEditor(point)) {
-        setNativeHoverKeepOpen(false);
-      }
-    }
-  });
+  const ownerDocument = options.editor.getDomNode()?.ownerDocument ?? document;
+  const documentMouseMove = (event: MouseEvent) => {
+    lastPoint = { x: event.clientX, y: event.clientY };
+    syncKeepOpen(lastPoint);
+    scheduleHoverAtPoint(lastPoint);
+  };
+  ownerDocument.addEventListener("mousemove", documentMouseMove, true);
 
   return {
     dispose() {
       clearShowTimer();
       clearHideTimer();
-      document.removeEventListener("mousemove", documentMouseMove, true);
-      setNativeHoverKeepOpen(false);
-      mouseMove.dispose();
-      mouseLeave.dispose();
+      ownerDocument.removeEventListener("mousemove", documentMouseMove, true);
+      setKeepOpen(false);
     },
   };
 }
