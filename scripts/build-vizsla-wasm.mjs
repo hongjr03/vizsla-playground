@@ -1,6 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { resolve } from "node:path";
-import { findFirstFile, output, repoRoot, run } from "./script-utils.mjs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { output, repoRoot, run } from "./script-utils.mjs";
 
 const args = process.argv.slice(2);
 const skipPrepare = args.includes("--skip-prepare");
@@ -66,11 +67,10 @@ run("rustup", ["run", "nightly", "cargo", "build", "--manifest-path", crateManif
 });
 
 const targetRoot = resolve(repoRoot, "wasm", "vizsla-lsp", "target", "wasm32-unknown-emscripten", "release");
-const coreJs = findFirstFile(targetRoot, ".js");
-const coreWasm = findFirstFile(targetRoot, ".wasm");
-if (!coreJs || !coreWasm) {
-  throw new Error(`Emscripten output did not include both JS and WASM under ${targetRoot}`);
-}
+const coreJs = resolve(targetRoot, "vizsla-lsp-wasm.js");
+const coreWasm = resolve(targetRoot, "vizsla_lsp_wasm.wasm");
+assertFile(coreJs, "Emscripten JavaScript output");
+assertFile(coreWasm, "Emscripten WASM output");
 
 const outWasmRoot = resolve(repoRoot, "public", "wasm");
 mkdirSync(outWasmRoot, { recursive: true });
@@ -82,13 +82,27 @@ console.log(`Built Vizsla WASM adapter into ${outWasmRoot}`);
 
 function emsdkEnvironment(emsdkEnv) {
   if (process.platform === "win32") {
-    return output("cmd.exe", ["/d", "/s", "/c", `call "${emsdkEnv}" >nul && set`], {
-      maxBuffer: 1024 * 1024,
-    }).split(/\r?\n/);
+    const tempRoot = mkdtempSync(join(tmpdir(), "vizsla-emsdk-env-"));
+    const commandPath = join(tempRoot, "env.cmd");
+    writeFileSync(commandPath, '@echo off\r\ncall "%EMSDK_ENV_PATH%" >nul\r\nset\r\n');
+    try {
+      return output("cmd.exe", ["/d", "/c", commandPath], {
+        env: { ...process.env, EMSDK_ENV_PATH: emsdkEnv },
+        maxBuffer: 1024 * 1024,
+      }).split(/\r?\n/);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   }
 
   return output("bash", ["-lc", "source \"$EMSDK_ENV\" >/dev/null && env -0"], {
     env: { ...process.env, EMSDK_ENV: emsdkEnv },
     maxBuffer: 1024 * 1024,
   }).split("\0");
+}
+
+function assertFile(path, label) {
+  if (!existsSync(path)) {
+    throw new Error(`${label} not found at ${path}`);
+  }
 }
