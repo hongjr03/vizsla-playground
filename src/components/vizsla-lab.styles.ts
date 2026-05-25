@@ -43,6 +43,11 @@ export const vizslaLabStyles: CSSResultGroup = [
       grid-template-rows: 1fr;
       overflow: hidden;
       background: var(--vzlab-background);
+      border: 0;
+      border-radius: 0;
+    }
+
+    :host([docs]) .shell {
       border: 1px solid var(--vzlab-border);
       border-radius: 8px;
     }
@@ -61,11 +66,11 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .editor-panel {
       display: grid;
-      grid-template-rows: auto auto 1fr;
+      grid-template-rows: auto 1fr;
     }
 
     .workspace-row {
-      min-height: 44px;
+      min-height: 36px;
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto;
       align-items: stretch;
@@ -83,8 +88,8 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .file-strip button {
       flex: 0 0 auto;
-      max-width: 240px;
-      height: 44px;
+      max-width: 210px;
+      height: 36px;
       min-width: 0;
       display: inline-flex;
       align-items: center;
@@ -94,9 +99,9 @@ export const vizslaLabStyles: CSSResultGroup = [
       border-radius: 0;
       background: transparent;
       color: var(--vzlab-muted);
-      padding: 0 14px;
+      padding: 0 10px;
       font:
-        500 12px/1 "Cascadia Code",
+        500 11px/1 "Cascadia Code",
         Consolas,
         monospace;
       overflow: hidden;
@@ -128,7 +133,7 @@ export const vizslaLabStyles: CSSResultGroup = [
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 6px;
+      padding: 4px;
       border-left: 1px solid var(--vzlab-border);
       background: var(--vzlab-panel);
     }
@@ -151,31 +156,31 @@ export const vizslaLabStyles: CSSResultGroup = [
     select,
     button,
     .status,
-    .editor-header,
+    .cursor,
     .diagnostic span {
       font:
-        500 12px/1 "Cascadia Code",
+        500 11px/1 "Cascadia Code",
         Consolas,
         monospace;
     }
 
     select {
-      height: 32px;
-      min-width: 164px;
+      height: 28px;
+      min-width: 138px;
       color: var(--vzlab-accent);
       background: var(--vzlab-panel);
       border: 1px solid var(--vzlab-border);
       border-radius: 6px;
-      padding: 0 32px 0 10px;
+      padding: 0 24px 0 8px;
     }
 
     button {
-      height: 32px;
-      min-width: 32px;
+      height: 28px;
+      min-width: 28px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 4px;
       border: 1px solid var(--vzlab-border);
       border-radius: 6px;
       background: var(--vzlab-panel);
@@ -201,8 +206,8 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     button svg {
-      width: 15px;
-      height: 15px;
+      width: 14px;
+      height: 14px;
     }
 
     button.is-busy svg {
@@ -210,8 +215,8 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .diagnostics-toggle {
-      min-width: 48px;
-      padding: 0 9px;
+      min-width: 42px;
+      padding: 0 7px;
     }
 
     .diagnostics-toggle.is-active {
@@ -222,14 +227,14 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .badge {
       min-width: 18px;
-      height: 18px;
+      height: 16px;
       display: inline-grid;
       place-items: center;
       border-radius: 999px;
       background: var(--vzlab-muted-surface);
       color: var(--vzlab-muted);
-      padding: 0 5px;
-      font-size: 11px;
+      padding: 0 4px;
+      font-size: 10px;
       font-variant-numeric: tabular-nums;
     }
 
@@ -239,15 +244,30 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .status {
-      height: 32px;
+      height: 28px;
       display: inline-flex;
       align-items: center;
-      gap: 7px;
-      padding: 0 10px;
+      gap: 6px;
+      padding: 0 8px;
       border: 1px solid var(--vzlab-border);
       border-radius: 999px;
       background: var(--vzlab-panel);
       color: var(--vzlab-muted);
+      white-space: nowrap;
+    }
+
+    .cursor {
+      height: 28px;
+      min-width: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 8px;
+      border: 1px solid var(--vzlab-border);
+      border-radius: 6px;
+      background: var(--vzlab-panel);
+      color: var(--vzlab-muted);
+      font-variant-numeric: tabular-nums;
       white-space: nowrap;
     }
 
@@ -256,45 +276,18 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .status-dot {
-      width: 7px;
-      height: 7px;
+      width: 6px;
+      height: 6px;
       border-radius: 999px;
       background: currentColor;
     }
 
-    .editor-header {
-      min-height: 34px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 0 12px;
-      background: #111113;
-      color: #a1a1aa;
-      border-bottom: 1px solid #27272a;
-    }
-
-    .editor-header span:first-child {
-      min-width: 0;
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .editor-header svg {
-      width: 14px;
-      height: 14px;
-    }
-
     .drawer {
       position: absolute;
-      right: 10px;
-      bottom: 10px;
-      left: 10px;
-      max-height: min(284px, calc(100% - 110px));
+      right: 8px;
+      bottom: 8px;
+      left: 8px;
+      max-height: min(240px, calc(100% - 76px));
       display: grid;
       grid-template-rows: auto 1fr;
       overflow: hidden;
@@ -307,34 +300,34 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .drawer-header {
-      min-height: 46px;
+      min-height: 40px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 8px 10px 8px 14px;
+      padding: 6px 8px 6px 12px;
       border-bottom: 1px solid var(--vzlab-border);
     }
 
     .drawer-header strong {
       display: block;
       color: var(--vzlab-accent);
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.2;
     }
 
     .drawer-header span {
       display: block;
-      margin-top: 3px;
+      margin-top: 2px;
       color: var(--vzlab-muted);
-      font-size: 12px;
+      font-size: 11px;
     }
 
     .panel {
       min-height: 0;
       display: none;
       overflow: auto;
-      padding: 10px;
+      padding: 8px;
     }
 
     .panel.is-active {
@@ -342,19 +335,19 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .empty {
-      min-height: 160px;
+      min-height: 128px;
       display: grid;
       place-items: center;
       gap: 10px;
       align-content: center;
       color: var(--vzlab-muted);
       text-align: center;
-      font-size: 13px;
+      font-size: 12px;
     }
 
     .empty svg {
-      width: 24px;
-      height: 24px;
+      width: 22px;
+      height: 22px;
     }
 
     .diagnostic {
@@ -367,8 +360,8 @@ export const vizslaLabStyles: CSSResultGroup = [
       background: var(--vzlab-panel);
       color: var(--vzlab-accent);
       border-radius: 7px;
-      padding: 10px 11px;
-      margin-bottom: 8px;
+      padding: 8px 9px;
+      margin-bottom: 6px;
       text-align: left;
       cursor: pointer;
     }
@@ -385,12 +378,12 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .diagnostic strong {
       display: block;
-      font-size: 13px;
+      font-size: 12px;
       line-height: 1.3;
     }
 
     .diagnostic p {
-      margin: 6px 0;
+      margin: 5px 0;
       color: #3f3f46;
       font-size: 12px;
       line-height: 1.45;
@@ -398,7 +391,7 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .diagnostic span {
       color: var(--vzlab-muted);
-      font-size: 11px;
+      font-size: 10px;
       overflow-wrap: anywhere;
     }
 

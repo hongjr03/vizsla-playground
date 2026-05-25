@@ -1,6 +1,6 @@
 import { html, type TemplateResult } from "lit";
 import { ClipboardCopy, FileCode2, RefreshCw, SearchCode, X } from "lucide";
-import { displayPath, pathFromWorkspaceUri, workspaceUri } from "../lab/workspace";
+import { displayPath, workspaceUri } from "../lab/workspace";
 import type { LabDiagnostic, VizslaScenario, VizslaScenarioFile, WorkerStatus } from "../types";
 import { renderIcon as icon } from "./icons";
 
@@ -27,7 +27,6 @@ interface VizslaLabViewActions {
 }
 
 export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLabViewActions): TemplateResult {
-  const activePath = pathFromWorkspaceUri(state.activeUri);
   const diagnostics = allDiagnostics(state);
   return html`
     <section class="shell" aria-label="Vizsla Lab">
@@ -70,13 +69,10 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
                 <span class="status-dot"></span>
                 <strong>${state.status.ready ? "Ready" : "Starting"}</strong>
               </div>
+              <div class="cursor" title="Cursor position">${state.cursor}</div>
               <button type="button" @click=${actions.resetScenario} title="Reset workspace">${icon(FileCode2)}</button>
               <button type="button" @click=${actions.copySource} title="Copy current file">${icon(ClipboardCopy)}</button>
             </div>
-          </div>
-          <div class="editor-header">
-            <span>${icon(FileCode2)}${activePath}</span>
-            <span>${state.cursor}</span>
           </div>
           <div class="editor"></div>
         </section>
