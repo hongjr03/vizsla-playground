@@ -65,7 +65,7 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
 
         <div class=${state.status.ready ? "status is-ready" : "status"}>
           <span class="status-dot"></span>
-          <strong>${state.status.ready ? "WASM ready" : "WASM starting"}</strong>
+          <strong>${state.status.ready ? "WASM ready" : state.status.detail}</strong>
         </div>
       </header>
 

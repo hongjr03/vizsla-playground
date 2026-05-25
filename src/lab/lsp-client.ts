@@ -10,6 +10,7 @@ export class VizslaBrowserClient {
   private readonly worker = new VizslaWorker();
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
+  private readonly wasmBaseUrl: string;
 
   onStatus: (status: WorkerStatus) => void = () => undefined;
   onServerCapabilities: (capabilities: unknown) => void = () => undefined;
@@ -17,7 +18,8 @@ export class VizslaBrowserClient {
   onTrace: (entry: LspTraceEntry) => void = () => undefined;
   onLog: (message: string, level: "info" | "warn" | "error") => void = () => undefined;
 
-  constructor(private readonly wasmBaseUrl = "/wasm/") {
+  constructor(wasmBaseUrl = "/wasm/") {
+    this.wasmBaseUrl = new URL(wasmBaseUrl, window.location.href).href;
     this.worker.addEventListener("message", (event: MessageEvent<WorkerResponse>) => {
       this.handleMessage(event.data);
     });
