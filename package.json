@@ -9,10 +9,11 @@
     "build": "astro check && astro build",
     "build:embed": "vite build --config vite.embed.config.ts",
     "preview": "astro preview --host 127.0.0.1 --port 4177",
-    "prepare:vizsla": "powershell -ExecutionPolicy Bypass -File scripts/prepare-vizsla.ps1",
-    "sync:vscode": "powershell -ExecutionPolicy Bypass -File scripts/sync-vscode-assets.ps1",
-    "setup:emsdk": "powershell -ExecutionPolicy Bypass -File scripts/setup-emsdk.ps1",
-    "build:wasm": "powershell -ExecutionPolicy Bypass -File scripts/build-vizsla-wasm.ps1",
+    "prepare:vizsla": "node scripts/prepare-vizsla.mjs",
+    "sync:vscode": "node scripts/sync-vscode-assets.mjs",
+    "setup:emsdk": "node scripts/setup-emsdk.mjs",
+    "build:wasm": "node scripts/build-vizsla-wasm.mjs",
+    "build:pages": "node scripts/build-pages.mjs",
     "install:docs-widget": "powershell -ExecutionPolicy Bypass -File scripts/install-docs-widget.ps1"
   },
   "dependencies": {
