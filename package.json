@@ -14,7 +14,7 @@
     "setup:emsdk": "node scripts/setup-emsdk.mjs",
     "build:wasm": "node scripts/build-vizsla-wasm.mjs",
     "build:pages": "node scripts/build-pages.mjs",
-    "install:docs-widget": "powershell -ExecutionPolicy Bypass -File scripts/install-docs-widget.ps1"
+    "install:docs-widget": "node scripts/install-docs-widget.mjs"
   },
   "dependencies": {
     "astro": "^6.3.7",

@@ -8,7 +8,7 @@ export default defineConfig({
     lib: {
       entry: "src/components/vizsla-lab.ts",
       name: "VizslaLab",
-      formats: ["es", "iife"],
+      formats: ["es"],
       fileName: (format) => `vizsla-lab.${format}.js`,
     },
   },

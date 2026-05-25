@@ -1,13 +1,6 @@
-import { html, LitElement, type PropertyValues, type TemplateResult } from "lit";
+import { LitElement, type PropertyValues, type TemplateResult } from "lit";
 import type * as Monaco from "monaco-editor";
-import {
-  ClipboardCopy,
-  FileCode2,
-  RefreshCw,
-  SearchCode,
-  SquareTerminal,
-} from "lucide";
-import { renderIcon as icon } from "./icons";
+import { renderVizslaLabView } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
 import { VizslaBrowserClient } from "../lab/lsp-client";
 import { diagnosticsFromLspReport, registerVizslaLspProviders, toMarkerData } from "../lab/monaco-lsp";
@@ -26,7 +19,7 @@ import {
 } from "../lab/workspace";
 import { drawWaveform } from "../lab/waveform";
 import { getScenario, SCENARIOS } from "../scenarios";
-import type { LabDiagnostic, LspTraceEntry, VizslaScenario, VizslaScenarioFile, WorkerStatus } from "../types";
+import type { LabDiagnostic, LspTraceEntry, VizslaScenario, WorkerStatus } from "../types";
 
 const DIAGNOSTIC_DEBOUNCE_MS = 260;
 
@@ -109,147 +102,28 @@ export class VizslaLabElement extends LitElement {
   }
 
   protected render(): TemplateResult {
-    const activePath = pathFromWorkspaceUri(this.activeUri);
-    return html`
-      <section class="shell" aria-label="Vizsla Lab">
-        <header class="topbar">
-          <div class="brand">
-            <div class="mark" aria-hidden="true">VL</div>
-            <div>
-              <h1>Vizsla Lab</h1>
-              <p>${activePath}</p>
-            </div>
-          </div>
-
-          <div class="controls">
-            <label class="select">
-              <span>Scenario</span>
-              <select @change=${this.onScenarioChange}>
-                ${SCENARIOS.map(
-                  (scenario) =>
-                    html`<option value=${scenario.id} ?selected=${scenario.id === this.activeScenario.id}>
-                      ${scenario.label}
-                    </option>`,
-                )}
-              </select>
-            </label>
-            <button
-              class=${this.diagnosticsBusy ? "is-busy" : ""}
-              type="button"
-              @click=${() => this.refreshDiagnosticsNow()}
-              title="Refresh diagnostics"
-            >
-              ${icon(RefreshCw)}
-            </button>
-            <button type="button" @click=${() => this.resetScenario()} title="Reset workspace">${icon(FileCode2)}</button>
-            <button type="button" @click=${() => this.copySource()} title="Copy current file">${icon(ClipboardCopy)}</button>
-          </div>
-
-          <div class=${this.status.ready ? "status is-ready" : "status"}>
-            <span class="status-dot"></span>
-            <strong>${this.status.ready ? "WASM ready" : "WASM starting"}</strong>
-          </div>
-        </header>
-
-        <div class="body">
-          <section class="editor-panel" aria-label="SystemVerilog editor">
-            <div class="editor-header">
-              <span>${icon(FileCode2)}${activePath}</span>
-              <span>${this.cursor}</span>
-            </div>
-            <div class="file-strip" role="tablist" aria-label="Workspace files">
-              ${this.activeScenario.files.map((file) => this.renderFileTab(file))}
-            </div>
-            <div class="editor"></div>
-          </section>
-
-          <aside class="inspector" aria-label="LSP inspector">
-            <canvas class="waveform" aria-hidden="true"></canvas>
-            <div class="tabs" role="tablist" aria-label="Inspector views">
-              ${["diagnostics", "protocol", "project"].map(
-                (tab) =>
-                  html`<button
-                    type="button"
-                    role="tab"
-                    class=${this.activeTab === tab ? "is-active" : ""}
-                    @click=${() => this.activateTab(tab)}
-                  >
-                    ${tab}
-                  </button>`,
-              )}
-            </div>
-            <div class=${this.activeTab === "diagnostics" ? "panel is-active" : "panel"}>${this.renderDiagnostics()}</div>
-            <div class=${this.activeTab === "protocol" ? "panel is-active" : "panel"}>${this.renderTrace()}</div>
-            <div class=${this.activeTab === "project" ? "panel is-active" : "panel"}>${this.renderProject()}</div>
-          </aside>
-        </div>
-      </section>
-    `;
-  }
-
-  private renderFileTab(file: VizslaScenarioFile): TemplateResult {
-    const uri = workspaceUri(file.path);
-    const diagnostics = this.diagnosticsByUri.get(uri) ?? [];
-    const classes = [
-      uri === this.activeUri ? "is-active" : "",
-      diagnostics.length > 0 ? "has-diagnostic" : "",
-      diagnostics.some((diagnostic) => diagnostic.severity === 1) ? "has-error" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    return html`
-      <button type="button" role="tab" class=${classes} @click=${() => this.activateFile(uri)} title=${displayPath(file.path)}>
-        ${displayPath(file.path)}
-      </button>
-    `;
-  }
-
-  private renderDiagnostics(): TemplateResult | TemplateResult[] {
-    const diagnostics = this.allDiagnostics();
-    if (diagnostics.length === 0) {
-      return html`<div class="empty">${icon(SearchCode)}<span>No diagnostics</span></div>`;
-    }
-
-    return diagnostics.map(
-      (diagnostic) => html`
-        <article class="diagnostic severity-${diagnostic.severity}" @click=${() => this.revealDiagnostic(diagnostic)}>
-          <strong>${diagnostic.title}</strong>
-          <p>${diagnostic.message}</p>
-          <span>${diagnostic.source} - ${diagnostic.filePath}:${diagnostic.range.start.line + 1}:${diagnostic.range.start.character + 1}</span>
-        </article>
-      `,
+    return renderVizslaLabView(
+      {
+        scenarios: SCENARIOS,
+        activeScenario: this.activeScenario,
+        activeUri: this.activeUri,
+        diagnosticsByUri: this.diagnosticsByUri,
+        trace: this.trace,
+        status: this.status,
+        activeTab: this.activeTab,
+        diagnosticsBusy: this.diagnosticsBusy,
+        cursor: this.cursor,
+      },
+      {
+        onScenarioChange: (event) => this.onScenarioChange(event),
+        refreshDiagnostics: () => void this.refreshDiagnosticsNow(),
+        resetScenario: () => this.resetScenario(),
+        copySource: () => void this.copySource(),
+        activateFile: (uri) => this.activateFile(uri),
+        revealDiagnostic: (diagnostic) => this.revealDiagnostic(diagnostic),
+        activateTab: (tab) => this.activateTab(tab),
+      },
     );
-  }
-
-  private renderTrace(): TemplateResult | TemplateResult[] {
-    if (this.trace.length === 0) {
-      return html`<div class="empty">${icon(SquareTerminal)}<span>No protocol events</span></div>`;
-    }
-
-    return this.trace.map(
-      (entry) => html`
-        <div class=${`trace ${entry.direction}`}>
-          <span>${entry.direction === "client" ? "C" : "S"}</span>
-          <div>
-            <strong>${entry.method}</strong>
-            <p>${entry.detail}</p>
-          </div>
-        </div>
-      `,
-    );
-  }
-
-  private renderProject(): TemplateResult {
-    return html`
-      <dl class="project">
-        <div><dt>Scenario</dt><dd>${this.activeScenario.description}</dd></div>
-        <div><dt>Workspace</dt><dd>/workspace</dd></div>
-        <div><dt>Entry</dt><dd>${this.activeScenario.entryFile}</dd></div>
-        <div><dt>Files</dt><dd>${this.activeScenario.files.map((file) => file.path).join(", ")}</dd></div>
-        <div><dt>Engine</dt><dd>${this.status.engine}</dd></div>
-        <div><dt>State</dt><dd>${this.status.detail}</dd></div>
-      </dl>
-    `;
   }
 
   private mountEditor(): void {
@@ -577,10 +451,6 @@ export class VizslaLabElement extends LitElement {
 
   private sourceUris(): string[] {
     return sourceFiles(this.activeScenario).map((file) => workspaceUri(file.path));
-  }
-
-  private allDiagnostics(): LabDiagnostic[] {
-    return Array.from(this.diagnosticsByUri.values()).flat();
   }
 
   private clearDiagnosticTimer(): void {

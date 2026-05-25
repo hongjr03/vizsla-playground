@@ -10,37 +10,21 @@ if (args.some((arg) => !["--", "--skip-prepare", "--skip-emsdk"].includes(arg)))
   throw new Error(`Unknown argument '${args.find((arg) => !["--", "--skip-prepare", "--skip-emsdk"].includes(arg))}'.`);
 }
 
-if (process.platform === "win32") {
-  const powershellArgs = ["-ExecutionPolicy", "Bypass", "-File", resolve(repoRoot, "scripts", "build-vizsla-wasm.ps1")];
-  if (skipPrepare) {
-    powershellArgs.push("-SkipPrepare");
-  }
-  if (skipEmsdk) {
-    powershellArgs.push("-SkipEmsdk");
-  }
-  run("powershell", powershellArgs);
-  process.exit(0);
-}
-
 if (!skipPrepare) {
   run(process.execPath, [resolve(repoRoot, "scripts", "prepare-vizsla.mjs")]);
 }
 
 const emsdkRoot = resolve(repoRoot, ".toolchains", "emsdk");
-const emsdkEnv = resolve(emsdkRoot, "emsdk_env.sh");
+const emsdkEnv = resolve(emsdkRoot, process.platform === "win32" ? "emsdk_env.bat" : "emsdk_env.sh");
 if (!skipEmsdk && !existsSync(emsdkEnv)) {
   run(process.execPath, [resolve(repoRoot, "scripts", "setup-emsdk.mjs")]);
 }
 if (!existsSync(emsdkEnv)) {
-  throw new Error("emsdk_env.sh not found. Run pnpm setup:emsdk first.");
+  throw new Error(`${emsdkEnv} not found. Run pnpm setup:emsdk first.`);
 }
 
-const envBlob = output("bash", ["-lc", "source \"$EMSDK_ENV\" >/dev/null && env -0"], {
-  env: { ...process.env, EMSDK_ENV: emsdkEnv },
-  maxBuffer: 1024 * 1024,
-});
 const buildEnv = { ...process.env };
-for (const entry of envBlob.split("\0")) {
+for (const entry of emsdkEnvironment(emsdkEnv)) {
   if (!entry) {
     continue;
   }
@@ -54,6 +38,7 @@ run("rustup", ["target", "add", "--toolchain", "nightly", "wasm32-unknown-emscri
 run("ninja", ["--version"], { env: buildEnv });
 
 const emscriptenRoot = resolve(emsdkRoot, "upstream", "emscripten");
+const emscriptenTool = (name) => resolve(emscriptenRoot, process.platform === "win32" ? `${name}.bat` : name);
 const linkArgs = [
   "-C", "link-arg=-sENVIRONMENT=web,worker",
   "-C", "link-arg=-sMODULARIZE=1",
@@ -66,12 +51,12 @@ const linkArgs = [
 Object.assign(buildEnv, {
   EMSCRIPTEN_CMAKE_TOOLCHAIN_FILE: resolve(emscriptenRoot, "cmake", "Modules", "Platform", "Emscripten.cmake"),
   CMAKE_GENERATOR_wasm32_unknown_emscripten: "Ninja",
-  EMCMAKE_wasm32_unknown_emscripten: resolve(emscriptenRoot, "emcmake"),
-  EMMAKE_wasm32_unknown_emscripten: resolve(emscriptenRoot, "emmake"),
-  CC_wasm32_unknown_emscripten: resolve(emscriptenRoot, "emcc"),
-  CXX_wasm32_unknown_emscripten: resolve(emscriptenRoot, "em++"),
-  AR_wasm32_unknown_emscripten: resolve(emscriptenRoot, "emar"),
-  CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_LINKER: resolve(emscriptenRoot, "emcc"),
+  EMCMAKE_wasm32_unknown_emscripten: emscriptenTool("emcmake"),
+  EMMAKE_wasm32_unknown_emscripten: emscriptenTool("emmake"),
+  CC_wasm32_unknown_emscripten: emscriptenTool("emcc"),
+  CXX_wasm32_unknown_emscripten: emscriptenTool("em++"),
+  AR_wasm32_unknown_emscripten: emscriptenTool("emar"),
+  CARGO_TARGET_WASM32_UNKNOWN_EMSCRIPTEN_LINKER: emscriptenTool("emcc"),
   RUSTFLAGS: linkArgs.join(" "),
 });
 
@@ -94,3 +79,16 @@ copyFileSync(coreWasm, resolve(outWasmRoot, "vizsla-core.wasm"));
 copyFileSync(resolve(repoRoot, "wasm", "js", "vizsla-lsp.adapter.js"), resolve(outWasmRoot, "vizsla-lsp.js"));
 
 console.log(`Built Vizsla WASM adapter into ${outWasmRoot}`);
+
+function emsdkEnvironment(emsdkEnv) {
+  if (process.platform === "win32") {
+    return output("cmd.exe", ["/d", "/s", "/c", `call "${emsdkEnv}" >nul && set`], {
+      maxBuffer: 1024 * 1024,
+    }).split(/\r?\n/);
+  }
+
+  return output("bash", ["-lc", "source \"$EMSDK_ENV\" >/dev/null && env -0"], {
+    env: { ...process.env, EMSDK_ENV: emsdkEnv },
+    maxBuffer: 1024 * 1024,
+  }).split("\0");
+}

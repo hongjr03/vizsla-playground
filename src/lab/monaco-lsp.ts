@@ -1,5 +1,5 @@
 import type * as Monaco from "monaco-editor";
-import type { LspRequest, MonacoModule } from "./monaco-protocol";
+import type { LspRequest, MonacoModule } from "./monaco";
 import {
   arrayOf,
   codeActionKinds,
@@ -25,9 +25,9 @@ import {
   toSemanticTokens,
   toSignatureHelp,
   toWorkspaceEdit,
-} from "./monaco-protocol";
+} from "./monaco";
 
-export { diagnosticsFromLspReport, toMarkerData } from "./monaco-protocol";
+export { diagnosticsFromLspReport, toMarkerData } from "./monaco";
 
 export interface MonacoLspBridgeOptions {
   monaco: MonacoModule;

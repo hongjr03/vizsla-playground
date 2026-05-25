@@ -4,7 +4,7 @@ Browser playground for Vizsla with an Astro page and an embeddable docs widget.
 
 ## Local Build
 
-```powershell
+```sh
 pnpm install
 pnpm build:wasm
 pnpm dev
@@ -18,7 +18,7 @@ Set the repository Pages source to GitHub Actions, then push to `main` or `maste
 
 The workflow calls:
 
-```powershell
+```sh
 pnpm build:pages
 ```
 
@@ -26,6 +26,6 @@ pnpm build:pages
 
 For a local Pages-style build without rebuilding WASM:
 
-```powershell
+```sh
 pnpm build:pages -- --base /vizsla-playground/ --skip-wasm
 ```
