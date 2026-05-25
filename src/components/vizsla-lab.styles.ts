@@ -86,7 +86,7 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .editor-panel {
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto minmax(0, 1fr) auto;
     }
 
     .monaco-editor .reference-zone-widget .messages,
@@ -305,51 +305,50 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .drawer {
-      position: absolute;
-      right: 8px;
-      bottom: 8px;
-      left: 8px;
-      max-height: min(240px, calc(100% - 76px));
+      min-height: 0;
+      max-height: min(220px, 36dvh);
       display: grid;
       grid-template-rows: auto 1fr;
       overflow: hidden;
       background: var(--vzlab-panel);
-      border: 1px solid var(--vzlab-border);
-      border-radius: 8px;
-      box-shadow:
-        0 20px 38px rgba(24, 24, 27, 0.16),
-        0 2px 8px rgba(24, 24, 27, 0.08);
+      border-top: 1px solid var(--vzlab-border);
     }
 
     .drawer-header {
-      min-height: 40px;
+      min-height: 34px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 6px 8px 6px 12px;
+      padding: 3px 4px 3px 10px;
       border-bottom: 1px solid var(--vzlab-border);
+      background: var(--vzlab-panel);
+    }
+
+    .drawer-header > div {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
     }
 
     .drawer-header strong {
-      display: block;
       color: var(--vzlab-accent);
-      font-size: 12px;
+      font-size: 11px;
       line-height: 1.2;
     }
 
     .drawer-header span {
-      display: block;
-      margin-top: 2px;
       color: var(--vzlab-muted);
       font-size: 11px;
+      white-space: nowrap;
     }
 
     .panel {
       min-height: 0;
       display: none;
       overflow: auto;
-      padding: 8px;
+      padding: 0;
     }
 
     .panel.is-active {
@@ -357,33 +356,37 @@ export const vizslaLabStyles: CSSResultGroup = [
     }
 
     .empty {
-      min-height: 128px;
-      display: grid;
-      place-items: center;
-      gap: 10px;
-      align-content: center;
+      min-height: 90px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
       color: var(--vzlab-muted);
       text-align: center;
       font-size: 12px;
     }
 
     .empty svg {
-      width: 22px;
-      height: 22px;
+      width: 14px;
+      height: 14px;
     }
 
     .diagnostic {
-      display: block;
+      display: grid;
+      grid-template-columns: minmax(96px, 0.35fr) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
       width: 100%;
       height: auto;
-      min-height: 0;
-      border: 1px solid var(--vzlab-border);
-      border-left: 3px solid var(--vzlab-danger);
+      min-height: 36px;
+      border: 0;
+      border-left: 2px solid var(--vzlab-danger);
+      border-bottom: 1px solid var(--vzlab-border);
       background: var(--vzlab-panel);
       color: var(--vzlab-accent);
-      border-radius: 7px;
-      padding: 8px 9px;
-      margin-bottom: 6px;
+      border-radius: 0;
+      padding: 5px 10px 5px 8px;
+      margin: 0;
       text-align: left;
       cursor: pointer;
     }
@@ -402,18 +405,26 @@ export const vizslaLabStyles: CSSResultGroup = [
       display: block;
       font-size: 12px;
       line-height: 1.3;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .diagnostic p {
-      margin: 5px 0;
+      min-width: 0;
+      margin: 0;
       color: #3f3f46;
       font-size: 12px;
-      line-height: 1.45;
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .diagnostic span {
       color: var(--vzlab-muted);
       font-size: 10px;
+      white-space: nowrap;
       overflow-wrap: anywhere;
     }
 
@@ -431,6 +442,22 @@ export const vizslaLabStyles: CSSResultGroup = [
 
       .toolbar select {
         min-width: 150px;
+      }
+
+      .diagnostic {
+        grid-template-columns: 1fr;
+        align-items: start;
+        gap: 3px;
+        padding: 7px 10px 7px 8px;
+      }
+
+      .diagnostic p,
+      .diagnostic strong {
+        white-space: normal;
+      }
+
+      .diagnostic span {
+        white-space: normal;
       }
     }
 

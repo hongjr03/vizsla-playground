@@ -73,23 +73,22 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
             </div>
           </div>
           <div class="editor"></div>
+          ${state.inspectorOpen
+            ? html`
+                <aside class="drawer" aria-label="Diagnostics">
+                  <div class="drawer-header">
+                    <div>
+                      <strong>Diagnostics</strong>
+                      <span>${diagnostics.length === 1 ? "1 diagnostic" : `${diagnostics.length} diagnostics`}</span>
+                    </div>
+                    <button type="button" @click=${actions.closeInspector} title="Close inspector">${icon(X)}</button>
+                  </div>
+                  <div class="panel is-active">${renderDiagnostics(diagnostics, actions)}</div>
+                </aside>
+              `
+            : null}
         </section>
       </div>
-
-      ${state.inspectorOpen
-        ? html`
-            <aside class="drawer" aria-label="LSP inspector">
-              <div class="drawer-header">
-                <div>
-                  <strong>Diagnostics</strong>
-                  <span>${diagnostics.length === 1 ? "1 diagnostic" : `${diagnostics.length} diagnostics`}</span>
-                </div>
-                <button type="button" @click=${actions.closeInspector} title="Close inspector">${icon(X)}</button>
-              </div>
-              <div class="panel is-active">${renderDiagnostics(diagnostics, actions)}</div>
-            </aside>
-          `
-        : null}
     </section>
   `;
 }
