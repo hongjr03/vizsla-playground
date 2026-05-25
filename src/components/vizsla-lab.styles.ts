@@ -12,7 +12,7 @@ export const vizslaLabStyles: CSSResultGroup = [
         "Segoe UI",
         system-ui,
         sans-serif;
-      --vzlab-height: min(860px, calc(100vh - 28px));
+      --vzlab-height: 100dvh;
       --vzlab-background: #fafafa;
       --vzlab-panel: #ffffff;
       --vzlab-editor: #0a0a0a;
@@ -37,7 +37,8 @@ export const vizslaLabStyles: CSSResultGroup = [
 
     .shell {
       position: relative;
-      min-height: var(--vzlab-height);
+      height: var(--vzlab-height);
+      min-height: 0;
       display: grid;
       grid-template-rows: 1fr;
       overflow: hidden;

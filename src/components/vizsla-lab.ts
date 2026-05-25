@@ -67,14 +67,14 @@ export class VizslaLabElement extends LitElement {
   protected firstUpdated(): void {
     this.activeScenario = getScenario(this.scenario);
     this.activeUri = workspaceUri(entryFile(this.activeScenario).path);
-    this.style.setProperty("--vzlab-height", this.height || (this.docs ? "620px" : "min(860px, calc(100vh - 28px))"));
+    this.syncLabHeight();
     this.mountEditor();
     this.restartClient();
   }
 
   protected updated(changed: PropertyValues<this>): void {
     if (changed.has("height") || changed.has("docs")) {
-      this.style.setProperty("--vzlab-height", this.height || (this.docs ? "620px" : "min(860px, calc(100vh - 28px))"));
+      this.syncLabHeight();
     }
 
     if (changed.has("scenario") && this.editor) {
@@ -446,6 +446,10 @@ export class VizslaLabElement extends LitElement {
       window.clearTimeout(this.diagnosticTimer);
       this.diagnosticTimer = undefined;
     }
+  }
+
+  private syncLabHeight(): void {
+    this.style.setProperty("--vzlab-height", this.height || (this.docs ? "620px" : "100dvh"));
   }
 
   private disposeModels(): void {
