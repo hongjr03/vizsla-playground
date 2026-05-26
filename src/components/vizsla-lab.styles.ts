@@ -56,8 +56,11 @@ export const vizslaLabStyles: CSSResultGroup = [
     .body,
     .editor-panel,
     .workspace-row,
+    .file-strip-shell,
     .file-strip,
     .file-strip button,
+    .file-strip-scrollbar,
+    .file-strip-thumb,
     .toolbar,
     .toolbar button,
     .drawer,
@@ -157,16 +160,74 @@ export const vizslaLabStyles: CSSResultGroup = [
       border-bottom: 1px solid var(--vzlab-border);
     }
 
+    .file-strip-shell {
+      position: relative;
+      min-width: 0;
+      min-height: 36px;
+      overflow: hidden;
+      background: var(--vzlab-panel);
+    }
+
     .file-strip {
+      width: 100%;
       min-width: 0;
       display: flex;
       align-items: stretch;
       overflow-x: auto;
+      overflow-y: hidden;
       scrollbar-width: none;
+      -ms-overflow-style: none;
     }
 
     .file-strip::-webkit-scrollbar {
+      width: 0;
+      height: 0;
       display: none;
+    }
+
+    .file-strip-scrollbar {
+      position: absolute;
+      inset-inline: 8px;
+      bottom: 2px;
+      height: 4px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--vzlab-border-strong), transparent 58%);
+      opacity: 0;
+      pointer-events: none;
+      transition:
+        opacity 160ms ease,
+        background 160ms ease;
+    }
+
+    .file-strip-thumb {
+      position: absolute;
+      inset-block: 0;
+      border-radius: inherit;
+      background: color-mix(in srgb, var(--vzlab-accent), transparent 44%);
+      transition: background 160ms ease;
+      cursor: grab;
+    }
+
+    .file-strip-shell.is-overflowing:hover .file-strip-scrollbar,
+    .file-strip-shell.is-overflowing:focus-within .file-strip-scrollbar,
+    .file-strip-shell.is-scrolling .file-strip-scrollbar,
+    .file-strip-shell.is-dragging .file-strip-scrollbar {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .file-strip-scrollbar:hover,
+    .file-strip-shell.is-dragging .file-strip-scrollbar {
+      background: color-mix(in srgb, var(--vzlab-border-strong), transparent 36%);
+    }
+
+    .file-strip-thumb:hover,
+    .file-strip-shell.is-dragging .file-strip-thumb {
+      background: color-mix(in srgb, var(--vzlab-accent), transparent 24%);
+    }
+
+    .file-strip-shell.is-dragging .file-strip-thumb {
+      cursor: grabbing;
     }
 
     .file-strip button {
@@ -668,7 +729,9 @@ export const vizslaLabStyles: CSSResultGroup = [
       .toolbar button::before,
       .toolbar button::after,
       .drawer-header button::before,
-      .drawer-header button::after {
+      .drawer-header button::after,
+      .file-strip-scrollbar,
+      .file-strip-thumb {
         animation-duration: 1ms !important;
         transition-duration: 1ms !important;
       }

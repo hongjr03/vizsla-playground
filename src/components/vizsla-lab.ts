@@ -29,6 +29,7 @@ import { getScenario } from "../scenarios";
 import type { LabDiagnostic, VizslaScenario, WorkerStatus } from "../types";
 
 const DIAGNOSTIC_DEBOUNCE_MS = 260;
+const FILE_STRIP_SCROLL_IDLE_MS = 850;
 
 export class VizslaLabElement extends LitElement {
   static properties = {
@@ -77,9 +78,25 @@ export class VizslaLabElement extends LitElement {
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
   private diagnosticsBusy = false;
+  private fileStripOverflowing = false;
+  private fileStripScrolling = false;
+  private fileStripDragging = false;
+  private fileStripThumbLeft = 0;
+  private fileStripThumbWidth = 100;
   private fileDialog: FileDialogState | undefined;
   private pendingSaveUris = new Set<string>();
   private diagnosticTimer: number | undefined;
+  private fileStripScrollTimer: number | undefined;
+  private fileStripMeasureFrame: number | undefined;
+  private fileStripDrag:
+    | {
+        startClientX: number;
+        startScrollLeft: number;
+        maxScrollLeft: number;
+        trackWidth: number;
+        thumbWidth: number;
+      }
+    | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
   private serverCapabilities: unknown;
@@ -87,6 +104,8 @@ export class VizslaLabElement extends LitElement {
   private themeObserver?: MutationObserver;
   private themeMediaQuery?: MediaQueryList;
   private readonly handleThemeChange = () => this.syncColorScheme();
+  private readonly handleFileStripThumbDrag = (event: PointerEvent) => this.dragFileStripThumb(event);
+  private readonly handleFileStripThumbRelease = () => this.endFileStripThumbDrag();
 
   constructor() {
     super();
@@ -116,6 +135,7 @@ export class VizslaLabElement extends LitElement {
     this.mountEditor();
     this.applyConfiguredState();
     this.restartClient();
+    this.queueFileStripMeasurement();
   }
 
   protected updated(changed: PropertyValues<this>): void {
@@ -146,11 +166,15 @@ export class VizslaLabElement extends LitElement {
       this.inspectorOpen = this.diagnosticsOpen;
       this.requestUpdate();
     }
+
+    this.queueFileStripMeasurement();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
     this.clearDiagnosticTimer();
+    this.clearFileStripTimers();
+    this.removeFileStripDragListeners();
     this.disposeLanguageFeatures();
     this.disposeEditorDisposables();
     this.editor?.dispose();
@@ -170,9 +194,17 @@ export class VizslaLabElement extends LitElement {
         status: this.status,
         inspectorOpen: this.inspectorOpen,
         diagnosticsBusy: this.diagnosticsBusy,
+        fileStripOverflowing: this.fileStripOverflowing,
+        fileStripScrolling: this.fileStripScrolling,
+        fileStripDragging: this.fileStripDragging,
+        fileStripThumbLeft: this.fileStripThumbLeft,
+        fileStripThumbWidth: this.fileStripThumbWidth,
         fileDialog: this.fileDialog,
       },
       {
+        updateFileStripScroll: (event) => this.updateFileStripScroll(event),
+        jumpFileStripScrollbar: (event) => this.jumpFileStripScrollbar(event),
+        beginFileStripThumbDrag: (event) => this.beginFileStripThumbDrag(event),
         createFile: () => this.createFile(),
         renameFile: () => this.renameFile(),
         deleteFile: () => this.deleteFile(),
@@ -791,6 +823,180 @@ export class VizslaLabElement extends LitElement {
     this.requestUpdate();
   }
 
+  private updateFileStripScroll(event: Event): void {
+    if (event.currentTarget instanceof HTMLElement) {
+      this.updateFileStripScrollbar(event.currentTarget, true);
+    }
+  }
+
+  private jumpFileStripScrollbar(event: PointerEvent): void {
+    if (!this.fileStripOverflowing) {
+      return;
+    }
+    event.preventDefault();
+
+    const strip = this.fileStripElement();
+    const track = this.fileStripScrollbarElement();
+    if (!strip || !track) {
+      return;
+    }
+
+    const rect = track.getBoundingClientRect();
+    const maxScrollLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    const thumbWidth = (this.fileStripThumbWidth / 100) * rect.width;
+    const travelWidth = Math.max(1, rect.width - thumbWidth);
+    const thumbLeft = clamp(event.clientX - rect.left - thumbWidth / 2, 0, travelWidth);
+    strip.scrollLeft = (thumbLeft / travelWidth) * maxScrollLeft;
+    this.updateFileStripScrollbar(strip, true);
+  }
+
+  private beginFileStripThumbDrag(event: PointerEvent): void {
+    if (!this.fileStripOverflowing) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+
+    const strip = this.fileStripElement();
+    const track = this.fileStripScrollbarElement();
+    if (!strip || !track) {
+      return;
+    }
+
+    const rect = track.getBoundingClientRect();
+    const maxScrollLeft = Math.max(0, strip.scrollWidth - strip.clientWidth);
+    if (maxScrollLeft <= 0 || rect.width <= 0) {
+      return;
+    }
+
+    this.fileStripDrag = {
+      startClientX: event.clientX,
+      startScrollLeft: strip.scrollLeft,
+      maxScrollLeft,
+      trackWidth: rect.width,
+      thumbWidth: (this.fileStripThumbWidth / 100) * rect.width,
+    };
+    this.fileStripDragging = true;
+    this.fileStripScrolling = true;
+    this.clearFileStripScrollTimer();
+    this.addFileStripDragListeners();
+    this.requestUpdate();
+  }
+
+  private dragFileStripThumb(event: PointerEvent): void {
+    const drag = this.fileStripDrag;
+    const strip = this.fileStripElement();
+    if (!drag || !strip) {
+      return;
+    }
+
+    const travelWidth = Math.max(1, drag.trackWidth - drag.thumbWidth);
+    const delta = event.clientX - drag.startClientX;
+    strip.scrollLeft = clamp(drag.startScrollLeft + (delta / travelWidth) * drag.maxScrollLeft, 0, drag.maxScrollLeft);
+    this.updateFileStripScrollbar(strip, true);
+  }
+
+  private endFileStripThumbDrag(): void {
+    if (!this.fileStripDrag) {
+      return;
+    }
+
+    this.fileStripDrag = undefined;
+    this.fileStripDragging = false;
+    this.removeFileStripDragListeners();
+    this.scheduleFileStripScrollbarFade();
+    this.requestUpdate();
+  }
+
+  private queueFileStripMeasurement(): void {
+    if (this.fileStripMeasureFrame !== undefined || typeof window === "undefined") {
+      return;
+    }
+
+    this.fileStripMeasureFrame = window.requestAnimationFrame(() => {
+      this.fileStripMeasureFrame = undefined;
+      const strip = this.fileStripElement();
+      if (strip) {
+        this.updateFileStripScrollbar(strip);
+      }
+    });
+  }
+
+  private updateFileStripScrollbar(strip: HTMLElement, reveal = false): void {
+    const clientWidth = Math.max(0, strip.clientWidth);
+    const scrollWidth = Math.max(clientWidth, strip.scrollWidth);
+    const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
+    const overflowing = maxScrollLeft > 1;
+    const trackWidth = Math.max(1, clientWidth - 16);
+    const minThumbWidth = Math.min(100, (20 / trackWidth) * 100);
+    const thumbWidth = overflowing ? Math.min(100, Math.max(minThumbWidth, (clientWidth / scrollWidth) * 100)) : 100;
+    const thumbTravel = Math.max(0, 100 - thumbWidth);
+    const thumbLeft = overflowing && maxScrollLeft > 0 ? (strip.scrollLeft / maxScrollLeft) * thumbTravel : 0;
+
+    const changed =
+      this.fileStripOverflowing !== overflowing ||
+      Math.abs(this.fileStripThumbWidth - thumbWidth) > 0.1 ||
+      Math.abs(this.fileStripThumbLeft - thumbLeft) > 0.1;
+
+    this.fileStripOverflowing = overflowing;
+    this.fileStripThumbWidth = thumbWidth;
+    this.fileStripThumbLeft = clamp(thumbLeft, 0, thumbTravel);
+
+    if (!overflowing && this.fileStripScrolling) {
+      this.clearFileStripScrollTimer();
+      this.fileStripScrolling = false;
+      this.fileStripDragging = false;
+    }
+
+    if (changed) {
+      this.requestUpdate();
+    }
+
+    if (reveal && overflowing) {
+      this.revealFileStripScrollbar();
+    }
+  }
+
+  private revealFileStripScrollbar(): void {
+    this.clearFileStripScrollTimer();
+    if (!this.fileStripScrolling) {
+      this.fileStripScrolling = true;
+      this.requestUpdate();
+    }
+    this.scheduleFileStripScrollbarFade();
+  }
+
+  private scheduleFileStripScrollbarFade(): void {
+    this.clearFileStripScrollTimer();
+    this.fileStripScrollTimer = window.setTimeout(() => {
+      this.fileStripScrollTimer = undefined;
+      if (!this.fileStripDragging && this.fileStripScrolling) {
+        this.fileStripScrolling = false;
+        this.requestUpdate();
+      }
+    }, FILE_STRIP_SCROLL_IDLE_MS);
+  }
+
+  private addFileStripDragListeners(): void {
+    window.addEventListener("pointermove", this.handleFileStripThumbDrag);
+    window.addEventListener("pointerup", this.handleFileStripThumbRelease, { once: true });
+    window.addEventListener("pointercancel", this.handleFileStripThumbRelease, { once: true });
+  }
+
+  private removeFileStripDragListeners(): void {
+    window.removeEventListener("pointermove", this.handleFileStripThumbDrag);
+    window.removeEventListener("pointerup", this.handleFileStripThumbRelease);
+    window.removeEventListener("pointercancel", this.handleFileStripThumbRelease);
+  }
+
+  private fileStripElement(): HTMLElement | undefined {
+    return this.renderRoot.querySelector<HTMLElement>(".file-strip") ?? undefined;
+  }
+
+  private fileStripScrollbarElement(): HTMLElement | undefined {
+    return this.renderRoot.querySelector<HTMLElement>(".file-strip-scrollbar") ?? undefined;
+  }
+
   private applyMarkers(uri: string): void {
     if (!this.monaco) {
       return;
@@ -891,6 +1097,21 @@ export class VizslaLabElement extends LitElement {
     }
   }
 
+  private clearFileStripTimers(): void {
+    this.clearFileStripScrollTimer();
+    if (this.fileStripMeasureFrame !== undefined) {
+      window.cancelAnimationFrame(this.fileStripMeasureFrame);
+      this.fileStripMeasureFrame = undefined;
+    }
+  }
+
+  private clearFileStripScrollTimer(): void {
+    if (this.fileStripScrollTimer !== undefined) {
+      window.clearTimeout(this.fileStripScrollTimer);
+      this.fileStripScrollTimer = undefined;
+    }
+  }
+
   private installThemeSync(): void {
     if (typeof document !== "undefined") {
       this.themeObserver = new MutationObserver(this.handleThemeChange);
@@ -967,6 +1188,10 @@ function cloneScenario(scenario: VizslaScenario): VizslaScenario {
     ...scenario,
     files: scenario.files.map((file) => ({ ...file })),
   };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function defaultSourceForPath(path: string): string {

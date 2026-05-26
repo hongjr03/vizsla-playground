@@ -19,10 +19,18 @@ interface VizslaLabViewState {
   status: WorkerStatus;
   inspectorOpen: boolean;
   diagnosticsBusy: boolean;
+  fileStripOverflowing: boolean;
+  fileStripScrolling: boolean;
+  fileStripDragging: boolean;
+  fileStripThumbLeft: number;
+  fileStripThumbWidth: number;
   fileDialog?: FileDialogState;
 }
 
 interface VizslaLabViewActions {
+  updateFileStripScroll(event: Event): void;
+  jumpFileStripScrollbar(event: PointerEvent): void;
+  beginFileStripThumbDrag(event: PointerEvent): void;
   createFile(): void;
   renameFile(): void;
   deleteFile(): void;
@@ -41,13 +49,34 @@ interface VizslaLabViewActions {
 export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLabViewActions): TemplateResult {
   const diagnostics = allDiagnostics(state);
   const statusLabel = state.status.ready ? "Ready" : "Starting";
+  const fileStripShellClass = [
+    "file-strip-shell",
+    state.fileStripOverflowing ? "is-overflowing" : "",
+    state.fileStripScrolling ? "is-scrolling" : "",
+    state.fileStripDragging ? "is-dragging" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return html`
     <section class="shell" aria-label="Vizsla Lab">
       <div class="body">
         <section class="editor-panel" aria-label="SystemVerilog editor">
           <div class="workspace-row">
-            <div class="file-strip" role="tablist" aria-label="Workspace files">
-              ${state.activeScenario.files.map((file) => renderFileTab(file, state, actions))}
+            <div class=${fileStripShellClass}>
+              <div class="file-strip" role="tablist" aria-label="Workspace files" @scroll=${actions.updateFileStripScroll}>
+                ${state.activeScenario.files.map((file) => renderFileTab(file, state, actions))}
+              </div>
+              <div
+                class="file-strip-scrollbar"
+                aria-hidden="true"
+                @pointerdown=${actions.jumpFileStripScrollbar}
+              >
+                <span
+                  class="file-strip-thumb"
+                  style=${`inline-size: ${state.fileStripThumbWidth}%; inset-inline-start: ${state.fileStripThumbLeft}%;`}
+                  @pointerdown=${actions.beginFileStripThumbDrag}
+                ></span>
+              </div>
             </div>
             <div class="toolbar">
               <button type="button" @click=${actions.createFile} title="New virtual file">${icon(FilePlus)}</button>
