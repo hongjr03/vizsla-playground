@@ -17,7 +17,6 @@ import {
 import {
   displayPath,
   entryFile,
-  fileName,
   isSourceFile,
   languageIdForPath,
   normalizeWorkspacePath,
@@ -26,6 +25,13 @@ import {
   workspaceUri,
   type LabFileState,
 } from "../lab/workspace";
+import {
+  cloneScenario,
+  createFileScenario,
+  defaultNewFilePath,
+  deleteFileScenario,
+  renameFileScenario,
+} from "../lab/workspace-mutations";
 import { getScenario } from "../scenarios";
 import type { LabDiagnostic, VizslaScenario, WorkerStatus } from "../types";
 
@@ -685,15 +691,9 @@ export class VizslaLabElement extends LitElement {
   }
 
   private commitCreateFile(path: string): void {
-    const files = [
-      ...this.currentWorkspaceFiles(),
-      {
-        path,
-        source: defaultSourceForPath(path),
-      },
-    ];
+    const mutation = createFileScenario(this.activeScenario, this.currentWorkspaceFiles(), path);
     this.fileDialog = undefined;
-    this.setScenario({ ...this.activeScenario, files, entryFile: path }, true, false, path);
+    this.setScenario(mutation.scenario, true, false, mutation.activePath);
   }
 
   private commitRenameFile(currentPath: string | undefined, nextPath: string): void {
@@ -709,18 +709,9 @@ export class VizslaLabElement extends LitElement {
       return;
     }
 
-    const files = this.currentWorkspaceFiles().map((file) =>
-      file.path === fromPath
-        ? {
-            ...file,
-            path: nextPath,
-            languageId: file.languageId && languageIdForPath(nextPath) === "plaintext" ? file.languageId : undefined,
-          }
-        : file,
-    );
-    const entry = normalizeWorkspacePath(this.activeScenario.entryFile) === fromPath ? nextPath : this.activeScenario.entryFile;
+    const mutation = renameFileScenario(this.activeScenario, this.currentWorkspaceFiles(), fromPath, nextPath);
     this.fileDialog = undefined;
-    this.setScenario({ ...this.activeScenario, files, entryFile: entry }, true, false, nextPath);
+    this.setScenario(mutation.scenario, true, false, mutation.activePath);
   }
 
   private commitDeleteFile(path: string | undefined): void {
@@ -728,21 +719,13 @@ export class VizslaLabElement extends LitElement {
       this.setFileDialogError("No active file to delete.");
       return;
     }
-    const currentFiles = this.currentWorkspaceFiles();
-    if (currentFiles.length <= 1) {
-      this.setFileDialogError("The workspace must keep at least one file.");
+    const mutation = deleteFileScenario(this.activeScenario, this.currentWorkspaceFiles(), path);
+    if ("error" in mutation) {
+      this.setFileDialogError(mutation.error);
       return;
     }
-    const deletedIndex = currentFiles.findIndex((file) => file.path === path);
-    if (deletedIndex < 0) {
-      this.setFileDialogError("The file is no longer in the workspace.");
-      return;
-    }
-    const files = currentFiles.filter((file) => file.path !== path);
-    const fallback = files[Math.min(deletedIndex, files.length - 1)] ?? files[0];
-    const entry = normalizeWorkspacePath(this.activeScenario.entryFile) === path ? fallback.path : this.activeScenario.entryFile;
     this.fileDialog = undefined;
-    this.setScenario({ ...this.activeScenario, files, entryFile: entry }, true, false, fallback.path);
+    this.setScenario(mutation.scenario, true, false, mutation.activePath);
   }
 
   private toggleDiagnostics(): void {
@@ -839,15 +822,7 @@ export class VizslaLabElement extends LitElement {
   }
 
   private defaultNewFilePath(): string {
-    for (let index = 1; index < 1000; index += 1) {
-      const suffix = index === 1 ? "" : `_${index}`;
-      const candidate = `rtl/new_module${suffix}.sv`;
-      if (!this.hasWorkspacePath(candidate)) {
-        return candidate;
-      }
-    }
-
-    return "new_file.sv";
+    return defaultNewFilePath((path) => this.hasWorkspacePath(path));
   }
 
   private clearDiagnosticTimer(): void {
@@ -926,33 +901,6 @@ export class VizslaLabElement extends LitElement {
     }
     this.fileStates.clear();
   }
-}
-
-function cloneScenario(scenario: VizslaScenario): VizslaScenario {
-  return {
-    ...scenario,
-    files: scenario.files.map((file) => ({ ...file })),
-  };
-}
-
-function defaultSourceForPath(path: string): string {
-  const languageId = languageIdForPath(path);
-  if (languageId !== "verilog" && languageId !== "systemverilog") {
-    return "";
-  }
-
-  return `module ${moduleNameForPath(path)};
-endmodule
-`;
-}
-
-function moduleNameForPath(path: string): string {
-  const withoutExtension = fileName(path).replace(/\.[^.]+$/, "");
-  const normalized = withoutExtension.replace(/\W+/g, "_").replace(/^_+|_+$/g, "");
-  if (!normalized) {
-    return "new_module";
-  }
-  return /^\d/.test(normalized) ? `m_${normalized}` : normalized;
 }
 
 if (!customElements.get("vizsla-lab")) {
