@@ -39,10 +39,6 @@ async function handleRequest(message: WorkerRequest): Promise<void> {
       await boot(message.wasmBaseUrl, message.rootUri, message.workspaceFiles, message.lspPort);
       post({ kind: "status", status });
       break;
-    case "writeFile":
-      writeWorkspaceFile(message.file.path, message.file.text);
-      trace("client", "writeFile", message.file.path);
-      break;
     case "stop":
       stopEngine();
       break;

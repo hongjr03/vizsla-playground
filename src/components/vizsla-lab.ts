@@ -263,8 +263,6 @@ export class VizslaLabElement extends LitElement {
         if (!state) {
           return;
         }
-        const text = state.model.getValue();
-        this.client?.writeFile(state.file.path, text);
         this.queueDocumentSave(state.uri);
         this.scheduleDiagnostics(this.sourceUris());
       }),

@@ -59,7 +59,6 @@ export interface WorkerWorkspaceFile {
 
 export type WorkerRequest =
   | { kind: "boot"; wasmBaseUrl: string; rootUri: string; workspaceFiles: WorkerWorkspaceFile[]; lspPort: MessagePort }
-  | { kind: "writeFile"; file: WorkerWorkspaceFile }
   | { kind: "stop" };
 
 export type WorkerResponse =

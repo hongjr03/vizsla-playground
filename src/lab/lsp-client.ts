@@ -53,10 +53,6 @@ export class VizslaBrowserClient {
     void this.requireLanguageClient().sendNotification(method, params);
   }
 
-  writeFile(path: string, text: string): void {
-    this.post({ kind: "writeFile", file: { path, text } });
-  }
-
   didSave(uri: string): void {
     this.notify("textDocument/didSave", {
       textDocument: { uri },
