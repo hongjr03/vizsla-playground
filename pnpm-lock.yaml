@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@codingame/monaco-vscode-api':
+        specifier: 25.1.2
+        version: 25.1.2
+      '@codingame/monaco-vscode-editor-api':
+        specifier: 25.1.2
+        version: 25.1.2
       astro:
         specifier: ^6.3.7
         version: 6.3.7(@types/node@25.9.1)(lightningcss@1.32.0)(rollup@4.60.4)(yaml@2.9.0)

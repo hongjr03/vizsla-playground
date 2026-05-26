@@ -17,6 +17,8 @@
     "install:docs-widget": "node scripts/install-docs-widget.mjs"
   },
   "dependencies": {
+    "@codingame/monaco-vscode-api": "33.0.9",
+    "@codingame/monaco-vscode-editor-api": "33.0.9",
     "astro": "^6.3.7",
     "lit": "^3.3.3",
     "lucide": "^1.16.0",
