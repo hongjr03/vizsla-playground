@@ -58,16 +58,11 @@ export interface WorkerWorkspaceFile {
 }
 
 export type WorkerRequest =
-  | { kind: "boot"; wasmBaseUrl: string; rootUri: string; workspaceFiles: WorkerWorkspaceFile[] }
+  | { kind: "boot"; wasmBaseUrl: string; rootUri: string; workspaceFiles: WorkerWorkspaceFile[]; lspPort: MessagePort }
   | { kind: "writeFile"; file: WorkerWorkspaceFile }
-  | { kind: "lspNotification"; method: string; params?: unknown }
-  | { kind: "lspRequest"; method: string; params?: unknown; requestId: number };
+  | { kind: "stop" };
 
 export type WorkerResponse =
   | { kind: "status"; status: WorkerStatus }
-  | { kind: "serverCapabilities"; capabilities: unknown }
-  | { kind: "diagnosticRefresh" }
   | { kind: "trace"; entry: LspTraceEntry }
-  | { kind: "lspResponse"; requestId: number; result: unknown }
-  | { kind: "lspError"; requestId: number; message: string }
   | { kind: "log"; level: "info" | "warn" | "error"; message: string };

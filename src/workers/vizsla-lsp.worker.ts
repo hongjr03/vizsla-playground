@@ -1,23 +1,26 @@
 import type { WorkerRequest, WorkerResponse, WorkerStatus, WorkerWorkspaceFile } from "../types";
-import { browserClientCapabilities, browserInitializationOptions } from "./lsp-browser-config";
-import { isRecord, type LspMessage, type LspNotification, type LspResponse, type PendingClientRequest, type WasmEngine } from "./lsp-protocol";
+import { isRecord, type LspMessage, type LspNotification, type WasmEngine } from "./lsp-protocol";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 const POLL_INTERVAL_MS = 16;
 
+interface PendingLspRequest {
+  method: string;
+  timeout: number;
+}
+
 let engine: WasmEngine | null = null;
+let lspPort: MessagePort | undefined;
 let status: WorkerStatus = {
   engine: "unavailable",
   ready: false,
   detail: "Vizsla WASM engine has not been loaded.",
 };
-let serverCapabilities: unknown = null;
 let traceId = 1;
-let lspId = 1;
-let pendingNotifications: LspNotification[] = [];
 let pollTimer: number | undefined;
 let rootUri = "file:///workspace";
-const pendingClientRequests = new Map<number | string, PendingClientRequest>();
+const pendingLspRequests = new Map<number | string, PendingLspRequest>();
+const workspaceTextByPath = new Map<string, string>();
 
 self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   void handleRequest(event.data).catch((error: unknown) => {
@@ -32,69 +35,41 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
 async function handleRequest(message: WorkerRequest): Promise<void> {
   switch (message.kind) {
     case "boot":
-      trace("client", "initialize", `${message.workspaceFiles.length} workspace files`);
-      await boot(message.wasmBaseUrl, message.rootUri, message.workspaceFiles);
+      trace("client", "boot", `${message.workspaceFiles.length} workspace files`);
+      await boot(message.wasmBaseUrl, message.rootUri, message.workspaceFiles, message.lspPort);
       post({ kind: "status", status });
-      if (serverCapabilities) {
-        post({ kind: "serverCapabilities", capabilities: serverCapabilities });
-      }
-      trace("server", "initialized", status.detail);
       break;
     case "writeFile":
-      requireEngine().writeFile(message.file.path, message.file.text);
+      writeWorkspaceFile(message.file.path, message.file.text);
       trace("client", "writeFile", message.file.path);
       break;
-    case "lspNotification": {
-      const notification: LspNotification = {
-        jsonrpc: "2.0",
-        method: message.method,
-        params: message.params,
-      };
-      trace("client", message.method, summarizeJson(message.params ?? {}));
-      if (engine) {
-        sendLsp(notification);
-      } else {
-        pendingNotifications.push(notification);
-      }
+    case "stop":
+      stopEngine();
       break;
-    }
-    case "lspRequest": {
-      trace("client", message.method, summarizeJson(message.params ?? {}));
-      try {
-        sendClientLspRequest(message.requestId, message.method, message.params ?? {});
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : `${message.method} failed.`;
-        trace("server", message.method, errorMessage);
-        post({ kind: "lspError", requestId: message.requestId, message: errorMessage });
-      }
-      break;
-    }
   }
 }
 
-async function boot(wasmBaseUrl: string, requestedRootUri: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<void> {
+async function boot(
+  wasmBaseUrl: string,
+  requestedRootUri: string,
+  workspaceFiles: WorkerWorkspaceFile[],
+  requestedLspPort: MessagePort,
+): Promise<void> {
   try {
-    clearPendingClientRequests("Vizsla LSP is restarting.");
+    stopEngine();
     rootUri = normalizeRootUri(requestedRootUri);
-    engine = await loadWasmEngine(wasmBaseUrl, rootUri, workspaceFiles);
-    const initialize = sendImmediateLspRequest("initialize", {
-      processId: null,
-      rootUri,
-      capabilities: browserClientCapabilities(),
-      initializationOptions: browserInitializationOptions(),
-      trace: "off",
-    });
-    if (initialize.error) {
-      throw new Error(initialize.error.message);
+    workspaceTextByPath.clear();
+    for (const file of workspaceFiles) {
+      workspaceTextByPath.set(normalizeWorkspacePath(file.path), file.text);
     }
-    serverCapabilities = isRecord(initialize.result) ? (initialize.result.capabilities ?? null) : null;
-    sendLspNotification("initialized", {});
-    flushPendingNotifications();
+    lspPort = requestedLspPort;
+    lspPort.onmessage = (event: MessageEvent<LspMessage>) => handleLspMessage(event.data);
+    lspPort.start();
+    engine = await loadWasmEngine(wasmBaseUrl, rootUri, workspaceFiles);
     status = { engine: "wasm", ready: true, detail: "Vizsla WASM engine loaded." };
+    trace("server", "ready", status.detail);
   } catch (error) {
-    engine = null;
-    serverCapabilities = null;
-    clearPendingClientRequests(error instanceof Error ? error.message : "Vizsla WASM is not available.");
+    stopEngine();
     status = {
       engine: "unavailable",
       ready: false,
@@ -108,7 +83,7 @@ async function boot(wasmBaseUrl: string, requestedRootUri: string, workspaceFile
   }
 }
 
-async function loadWasmEngine(wasmBaseUrl: string, rootUri: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<WasmEngine> {
+async function loadWasmEngine(wasmBaseUrl: string, requestedRootUri: string, workspaceFiles: WorkerWorkspaceFile[]): Promise<WasmEngine> {
   const baseUrl = new URL(wasmBaseUrl.endsWith("/") ? wasmBaseUrl : `${wasmBaseUrl}/`, self.location.href);
   const moduleUrl = new URL("vizsla-lsp.js", baseUrl);
   moduleUrl.search = baseUrl.search;
@@ -124,86 +99,46 @@ async function loadWasmEngine(wasmBaseUrl: string, rootUri: string, workspaceFil
     throw new Error("Vizsla WASM adapter did not export createVizslaLspEngine().");
   }
 
-  return loaded.createVizslaLspEngine({ wasmBaseUrl: baseUrl.href, rootUri, workspaceFiles });
+  return loaded.createVizslaLspEngine({ wasmBaseUrl: baseUrl.href, rootUri: requestedRootUri, workspaceFiles });
 }
 
-function requireEngine(): WasmEngine {
+function handleLspMessage(message: LspMessage): void {
+  traceLspMessage("client", message);
   if (!engine) {
-    throw new Error(status.detail);
+    respondWithError(message, status.detail);
+    return;
   }
-  return engine;
-}
 
-function sendImmediateLspRequest(method: string, params: unknown): LspResponse {
-  const id = lspId++;
-  const responses = sendLsp({ jsonrpc: "2.0", id, method, params });
-  const response = responses.find((message): message is LspResponse => "id" in message && message.id === id);
-  if (!response) {
-    throw new Error(`Vizsla LSP did not respond to ${method}.`);
-  }
-  return response;
-}
+  trackClientRequest(message);
+  applyWorkspaceTextSideEffect(message);
 
-function sendClientLspRequest(requestId: number, method: string, params: unknown): void {
-  requireEngine();
-
-  const id = lspId++;
-  const timeout = self.setTimeout(() => {
-    const pending = pendingClientRequests.get(id);
-    if (!pending) {
-      return;
-    }
-    pendingClientRequests.delete(id);
-    trace("server", pending.method, "request timed out");
-    post({
-      kind: "lspError",
-      requestId: pending.requestId,
-      message: `Vizsla LSP did not respond to ${pending.method}.`,
-    });
-  }, REQUEST_TIMEOUT_MS);
-
-  pendingClientRequests.set(id, { requestId, method, timeout });
-  sendLsp({ jsonrpc: "2.0", id, method, params });
-
-  if (pendingClientRequests.has(id)) {
+  try {
+    const emitted = engine.send(message);
+    processEmittedMessages(emitted);
     schedulePump();
+  } catch (error) {
+    clearClientRequest(message);
+    respondWithError(message, error instanceof Error ? error.message : "Vizsla LSP request failed.");
   }
-}
-
-function sendLspNotification(method: string, params: unknown): void {
-  sendLsp({ jsonrpc: "2.0", method, params });
-}
-
-function sendLsp(message: LspMessage): LspMessage[] {
-  const emitted = requireEngine().send(message);
-  processEmittedMessages(emitted);
-  return emitted;
-}
-
-function pollLsp(): LspMessage[] {
-  const emitted = requireEngine().poll();
-  processEmittedMessages(emitted);
-  return emitted;
 }
 
 function processEmittedMessages(emitted: LspMessage[]): void {
-  for (const response of emitted) {
-    traceEmittedMessage(response);
-    handleClientResponse(response);
-    handleServerRequest(response);
+  for (const message of emitted) {
+    traceLspMessage("server", message);
+    clearClientRequest(message);
+    postLsp(message);
   }
 }
 
-function flushPendingNotifications(): void {
-  const notifications = pendingNotifications;
-  pendingNotifications = [];
-  for (const notification of notifications) {
-    sendLsp(notification);
+function pollLsp(): void {
+  if (!engine) {
+    return;
   }
+  processEmittedMessages(engine.poll());
 }
 
 function schedulePump(): void {
-  if (pollTimer !== undefined || pendingClientRequests.size === 0) {
+  if (pollTimer !== undefined || pendingLspRequests.size === 0) {
     return;
   }
 
@@ -213,107 +148,190 @@ function schedulePump(): void {
       pollLsp();
       schedulePump();
     } catch (error) {
-      clearPendingClientRequests(error instanceof Error ? error.message : "Vizsla LSP polling failed.");
+      failPendingRequests(error instanceof Error ? error.message : "Vizsla LSP polling failed.");
     }
   }, POLL_INTERVAL_MS);
 }
 
-function handleClientResponse(message: LspMessage): void {
+function trackClientRequest(message: LspMessage): void {
+  if (!("id" in message) || !("method" in message)) {
+    return;
+  }
+
+  const id = message.id;
+  const method = message.method;
+  const timeout = self.setTimeout(() => {
+    const pending = pendingLspRequests.get(id);
+    if (!pending) {
+      return;
+    }
+    pendingLspRequests.delete(id);
+    trace("server", pending.method, "request timed out");
+    postLsp({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32001, message: `Vizsla LSP did not respond to ${pending.method}.` },
+    });
+  }, REQUEST_TIMEOUT_MS);
+
+  pendingLspRequests.set(id, { method, timeout });
+}
+
+function clearClientRequest(message: LspMessage): void {
   if (!("id" in message) || "method" in message) {
     return;
   }
-
-  const pending = pendingClientRequests.get(message.id);
+  const pending = pendingLspRequests.get(message.id);
   if (!pending) {
     return;
   }
-
   self.clearTimeout(pending.timeout);
-  pendingClientRequests.delete(message.id);
+  pendingLspRequests.delete(message.id);
+}
 
-  if (message.error) {
-    trace("server", pending.method, message.error.message);
-    post({ kind: "lspError", requestId: pending.requestId, message: message.error.message });
-  } else {
-    trace("server", pending.method, summarizeLspResult(message.result));
-    post({ kind: "lspResponse", requestId: pending.requestId, result: message.result ?? null });
+function failPendingRequests(message: string): void {
+  for (const [id, pending] of pendingLspRequests) {
+    self.clearTimeout(pending.timeout);
+    postLsp({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32001, message },
+    });
+  }
+  pendingLspRequests.clear();
+}
+
+function respondWithError(message: LspMessage, errorMessage: string): void {
+  if (!("id" in message)) {
+    post({ kind: "log", level: "error", message: errorMessage });
+    return;
+  }
+  postLsp({
+    jsonrpc: "2.0",
+    id: message.id,
+    error: { code: -32001, message: errorMessage },
+  });
+}
+
+function postLsp(message: LspMessage): void {
+  lspPort?.postMessage(message);
+}
+
+function writeWorkspaceFile(path: string, text: string): void {
+  const normalized = normalizeWorkspacePath(path);
+  workspaceTextByPath.set(normalized, text);
+  requireEngine().writeFile(normalized, text);
+}
+
+function applyWorkspaceTextSideEffect(message: LspMessage): void {
+  if (!("method" in message)) {
+    return;
+  }
+
+  if (message.method === "textDocument/didOpen") {
+    const params = lspParams(message);
+    const textDocument = recordValue(params?.textDocument);
+    const path = workspacePathFromUri(textDocument?.uri);
+    if (path && typeof textDocument?.text === "string") {
+      writeWorkspaceFile(path, textDocument.text);
+    }
+    return;
+  }
+
+  if (message.method === "textDocument/didChange") {
+    const params = lspParams(message);
+    const textDocument = recordValue(params?.textDocument);
+    const path = workspacePathFromUri(textDocument?.uri);
+    const contentChanges = Array.isArray(params?.contentChanges) ? params.contentChanges : [];
+    if (!path || contentChanges.length === 0) {
+      return;
+    }
+    let text = workspaceTextByPath.get(path) ?? "";
+    for (const change of contentChanges.map(recordValue)) {
+      if (!change || typeof change.text !== "string") {
+        continue;
+      }
+      text = change.range ? applyRangedTextChange(text, recordValue(change.range), change.text) : change.text;
+    }
+    writeWorkspaceFile(path, text);
   }
 }
 
-function clearPendingClientRequests(message: string): void {
-  for (const pending of pendingClientRequests.values()) {
-    self.clearTimeout(pending.timeout);
-    post({ kind: "lspError", requestId: pending.requestId, message });
-  }
-  pendingClientRequests.clear();
+function applyRangedTextChange(text: string, range: Record<string, unknown> | undefined, replacement: string): string {
+  const start = recordValue(range?.start);
+  const end = recordValue(range?.end);
+  const startOffset = offsetAt(text, Number(start?.line), Number(start?.character));
+  const endOffset = offsetAt(text, Number(end?.line), Number(end?.character));
+  return `${text.slice(0, startOffset)}${replacement}${text.slice(endOffset)}`;
+}
 
+function offsetAt(text: string, line: number, character: number): number {
+  if (!Number.isFinite(line) || !Number.isFinite(character) || line <= 0) {
+    return Math.max(0, Math.min(text.length, Number.isFinite(character) ? character : 0));
+  }
+
+  let offset = 0;
+  for (let currentLine = 0; currentLine < line && offset < text.length; currentLine += 1) {
+    const nextNewline = text.indexOf("\n", offset);
+    if (nextNewline < 0) {
+      return text.length;
+    }
+    offset = nextNewline + 1;
+  }
+
+  return Math.max(0, Math.min(text.length, offset + character));
+}
+
+function lspParams(message: LspNotification): Record<string, unknown> | undefined {
+  return recordValue(message.params);
+}
+
+function workspacePathFromUri(uri: unknown): string | undefined {
+  if (typeof uri !== "string") {
+    return undefined;
+  }
+  const prefix = `${rootUri}/`;
+  if (!uri.startsWith(prefix)) {
+    return undefined;
+  }
+  return normalizeWorkspacePath(decodeURIComponent(uri.slice(prefix.length)));
+}
+
+function requireEngine(): WasmEngine {
+  if (!engine) {
+    throw new Error(status.detail);
+  }
+  return engine;
+}
+
+function stopEngine(): void {
+  failPendingRequests("Vizsla LSP is stopping.");
   if (pollTimer !== undefined) {
     self.clearTimeout(pollTimer);
     pollTimer = undefined;
   }
+  engine?.reset();
+  engine = null;
+  lspPort?.close();
+  lspPort = undefined;
 }
 
-function handleServerRequest(message: LspMessage): void {
-  if (!("method" in message) || !("id" in message)) {
-    return;
-  }
-
-  if (message.method === "workspace/diagnostic/refresh") {
-    post({ kind: "diagnosticRefresh" });
-    respondToServer(message.id, null);
-  } else if (
-    message.method === "workspace/inlayHint/refresh" ||
-    message.method === "workspace/codeLens/refresh" ||
-    message.method === "client/registerCapability" ||
-    message.method === "client/unregisterCapability"
-  ) {
-    respondToServer(message.id, null);
-  } else if (message.method === "workspace/configuration") {
-    respondToServer(message.id, []);
-  }
-}
-
-function respondToServer(id: number | string, result: unknown): void {
-  sendLsp({ jsonrpc: "2.0", id, result });
-}
-
-function traceEmittedMessage(message: LspMessage): void {
+function traceLspMessage(direction: "client" | "server", message: LspMessage): void {
   if ("method" in message) {
     const detail = "params" in message ? summarizeJson(message.params) : "";
-    trace("server", message.method, detail);
+    trace(direction, message.method, detail);
   } else if ("id" in message) {
-    trace("server", `response#${String(message.id)}`, message.error ? message.error.message : "ok");
+    trace(direction, `response#${String(message.id)}`, message.error ? message.error.message : "ok");
   }
+}
+
+function trace(direction: "client" | "server", method: string, detail: string): void {
+  post({ kind: "trace", entry: { id: traceId++, direction, method, detail } });
 }
 
 function summarizeJson(value: unknown): string {
   const text = JSON.stringify(value);
   return text.length > 160 ? `${text.slice(0, 157)}...` : text;
-}
-
-function summarizeLspResult(value: unknown): string {
-  if (isRecord(value)) {
-    if (Array.isArray(value.items)) {
-      return `${value.items.length} items`;
-    }
-    if (Array.isArray(value.data)) {
-      return `${value.data.length / 5} semantic tokens`;
-    }
-    if (Array.isArray(value.edits)) {
-      return `${value.edits.length} edits`;
-    }
-    if ("contents" in value) {
-      return "contents returned";
-    }
-  }
-  if (Array.isArray(value)) {
-    return `${value.length} items`;
-  }
-  return value === null || value === undefined ? "empty" : "ok";
-}
-
-function trace(direction: "client" | "server", method: string, detail: string): void {
-  post({ kind: "trace", entry: { id: traceId++, direction, method, detail } });
 }
 
 function post(response: WorkerResponse): void {
@@ -322,4 +340,12 @@ function post(response: WorkerResponse): void {
 
 function normalizeRootUri(uri: string): string {
   return uri.replace(/\/+$/, "");
+}
+
+function normalizeWorkspacePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
 }
