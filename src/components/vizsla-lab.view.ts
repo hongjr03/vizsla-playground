@@ -1,12 +1,17 @@
 import { html, type TemplateResult } from "lit";
-import { ClipboardCopy, FileCode2, RefreshCw, SearchCode, X } from "lucide";
+import { ClipboardCopy, FilePlus, Pencil, RefreshCw, RotateCcw, SearchCode, Trash2, X } from "lucide";
 import { displayPath, workspaceUri } from "../lab/workspace";
 import type { LabDiagnostic, VizslaScenario, VizslaScenarioFile, WorkerStatus } from "../types";
 import { renderIcon as icon } from "./icons";
 
+export interface FileDialogState {
+  mode: "create" | "rename" | "delete";
+  value: string;
+  targetPath?: string;
+  error?: string;
+}
+
 interface VizslaLabViewState {
-  scenarios: readonly VizslaScenario[];
-  allowScenarioSelection: boolean;
   activeScenario: VizslaScenario;
   activeUri: string;
   workspaceRootUri: string;
@@ -14,10 +19,16 @@ interface VizslaLabViewState {
   status: WorkerStatus;
   inspectorOpen: boolean;
   diagnosticsBusy: boolean;
+  fileDialog?: FileDialogState;
 }
 
 interface VizslaLabViewActions {
-  onScenarioChange(event: Event): void;
+  createFile(): void;
+  renameFile(): void;
+  deleteFile(): void;
+  updateFileDialogValue(event: Event): void;
+  submitFileDialog(event: Event): void;
+  closeFileDialog(): void;
   refreshDiagnostics(): void;
   resetScenario(): void;
   copySource(): void;
@@ -39,21 +50,9 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
               ${state.activeScenario.files.map((file) => renderFileTab(file, state, actions))}
             </div>
             <div class="toolbar">
-              ${state.allowScenarioSelection
-                ? html`
-                    <label class="select">
-                      <span>Scenario</span>
-                      <select @change=${actions.onScenarioChange}>
-                        ${state.scenarios.map(
-                          (scenario) =>
-                            html`<option value=${scenario.id} ?selected=${scenario.id === state.activeScenario.id}>
-                              ${scenario.label}
-                            </option>`,
-                        )}
-                      </select>
-                    </label>
-                  `
-                : null}
+              <button type="button" @click=${actions.createFile} title="New virtual file">${icon(FilePlus)}</button>
+              <button type="button" @click=${actions.renameFile} title="Rename current file">${icon(Pencil)}</button>
+              <button type="button" @click=${actions.deleteFile} title="Delete current file">${icon(Trash2)}</button>
               <button
                 class=${state.inspectorOpen ? "diagnostics-toggle is-active" : "diagnostics-toggle"}
                 type="button"
@@ -79,7 +78,7 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
               >
                 <span class="status-dot"></span>
               </div>
-              <button type="button" @click=${actions.resetScenario} title="Reset workspace">${icon(FileCode2)}</button>
+              <button type="button" @click=${actions.resetScenario} title="Reset workspace">${icon(RotateCcw)}</button>
               <button type="button" @click=${actions.copySource} title="Copy current file">${icon(ClipboardCopy)}</button>
             </div>
           </div>
@@ -100,7 +99,66 @@ export function renderVizslaLabView(state: VizslaLabViewState, actions: VizslaLa
             : null}
         </section>
       </div>
+      ${state.fileDialog ? renderFileDialog(state.fileDialog, actions) : null}
     </section>
+  `;
+}
+
+function renderFileDialog(dialog: FileDialogState, actions: VizslaLabViewActions): TemplateResult {
+  const isDelete = dialog.mode === "delete";
+  const title =
+    dialog.mode === "create" ? "New virtual file" : dialog.mode === "rename" ? "Rename virtual file" : "Delete virtual file";
+  const description =
+    dialog.mode === "create"
+      ? "Create a file in this browser workspace. Use paths like rtl/new_module.sv."
+      : dialog.mode === "rename"
+        ? "Move the current file to a new path inside this browser workspace."
+        : `Remove ${dialog.targetPath ?? "the current file"} from this browser workspace.`;
+  const confirmLabel = dialog.mode === "create" ? "Create" : dialog.mode === "rename" ? "Rename" : "Delete";
+  const submitDisabled = isDelete && !!dialog.error;
+
+  return html`
+    <div class="dialog-backdrop" role="presentation" @click=${actions.closeFileDialog}>
+      <form
+        class="file-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="file-dialog-title"
+        @submit=${actions.submitFileDialog}
+        @click=${(event: Event) => event.stopPropagation()}
+      >
+        <div class="file-dialog-header">
+          <div>
+            <strong id="file-dialog-title">${title}</strong>
+            <span>${description}</span>
+          </div>
+          <button type="button" class="icon-button" @click=${actions.closeFileDialog} title="Close">${icon(X)}</button>
+        </div>
+
+        ${isDelete
+          ? html`<p class="file-dialog-target">${dialog.targetPath}</p>`
+          : html`
+              <label class="file-dialog-field">
+                <span>File path</span>
+                <input
+                  name="path"
+                  autocomplete="off"
+                  spellcheck="false"
+                  autofocus
+                  .value=${dialog.value}
+                  @input=${actions.updateFileDialogValue}
+                />
+              </label>
+            `}
+
+        ${dialog.error ? html`<p class="file-dialog-error">${dialog.error}</p>` : null}
+
+        <div class="file-dialog-actions">
+          <button type="button" class="secondary" @click=${actions.closeFileDialog}>Cancel</button>
+          <button type="submit" class=${isDelete ? "danger" : "primary"} ?disabled=${submitDisabled}>${confirmLabel}</button>
+        </div>
+      </form>
+    </div>
   `;
 }
 

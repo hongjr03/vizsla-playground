@@ -33,17 +33,17 @@ cpSync(resolve(repoRoot, "dist", "embed"), docsPublic, { recursive: true, force:
 writeFileSync(
   resolve(docsComponents, "VizslaLab.astro"),
   `---
-const { scenario = "counter", height = "620px" } = Astro.props;
+const { scenario = "counter", height = "620px", mode = "embed" } = Astro.props;
 const base = import.meta.env.BASE_URL.endsWith("/") ? import.meta.env.BASE_URL : \`\${import.meta.env.BASE_URL}/\`;
 const assetBase = \`\${base}vizsla-lab/\`;
 ---
 
 <vizsla-lab
-  docs
   scenario={scenario}
   height={height}
   wasm-base-url={\`\${assetBase}wasm/\`}
   vscode-assets-url={\`\${assetBase}vscode/\`}
+  {...(mode === "app" ? {} : { docs: true })}
 ></vizsla-lab>
 
 <script type="module" src={\`\${assetBase}vizsla-lab.es.js\`}></script>
@@ -59,7 +59,7 @@ description: Run the Vizsla language server directly in the browser.
 
 import VizslaLab from '../../components/VizslaLab.astro';
 
-<VizslaLab scenario="macro-guard" />
+<VizslaLab mode="app" />
 `,
 );
 

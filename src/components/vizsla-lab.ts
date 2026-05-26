@@ -1,6 +1,6 @@
 import { LitElement, type PropertyValues, type TemplateResult } from "lit";
 import type * as Monaco from "monaco-editor";
-import { renderVizslaLabView } from "./vizsla-lab.view";
+import { renderVizslaLabView, type FileDialogState } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
 import { isClientDisposedError, VizslaBrowserClient } from "../lab/lsp-client";
 import { diagnosticsFromLspReport, registerVizslaLspProviders, toMarkerData } from "../lab/monaco-lsp";
@@ -16,6 +16,7 @@ import {
 import {
   displayPath,
   entryFile,
+  fileName,
   isSourceFile,
   languageIdForPath,
   normalizeWorkspacePath,
@@ -24,7 +25,7 @@ import {
   workspaceUri,
   type LabFileState,
 } from "../lab/workspace";
-import { getScenario, SCENARIOS } from "../scenarios";
+import { getScenario } from "../scenarios";
 import type { LabDiagnostic, VizslaScenario, WorkerStatus } from "../types";
 
 const DIAGNOSTIC_DEBOUNCE_MS = 260;
@@ -69,12 +70,14 @@ export class VizslaLabElement extends LitElement {
   private editorDisposables: Monaco.IDisposable[] = [];
   private fileStates = new Map<string, LabFileState>();
   private activeScenario: VizslaScenario = getScenario("counter");
+  private initialScenario: VizslaScenario = cloneScenario(getScenario("counter"));
   private readonly workspaceRootUri = `file:///workspace-${Math.random().toString(36).slice(2)}`;
   private activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
   private diagnosticsByUri = new Map<string, LabDiagnostic[]>();
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
   private diagnosticsBusy = false;
+  private fileDialog: FileDialogState | undefined;
   private diagnosticTimer: number | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
@@ -102,7 +105,8 @@ export class VizslaLabElement extends LitElement {
   }
 
   protected firstUpdated(): void {
-    this.activeScenario = this.resolvedScenario();
+    this.activeScenario = cloneScenario(this.resolvedScenario());
+    this.initialScenario = cloneScenario(this.activeScenario);
     this.activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
     this.inspectorOpen = this.diagnosticsOpen;
     this.installThemeSync();
@@ -123,7 +127,7 @@ export class VizslaLabElement extends LitElement {
     }
 
     if ((changed.has("scenario") || changed.has("project")) && this.editor) {
-      this.setScenario(this.resolvedScenario(), changed.has("project"));
+      this.setScenario(this.resolvedScenario(), true, true);
     }
 
     if (
@@ -158,8 +162,6 @@ export class VizslaLabElement extends LitElement {
   protected render(): TemplateResult {
     return renderVizslaLabView(
       {
-        scenarios: this.availableScenarios(),
-        allowScenarioSelection: !this.project,
         activeScenario: this.activeScenario,
         activeUri: this.activeUri,
         workspaceRootUri: this.workspaceRootUri,
@@ -167,9 +169,15 @@ export class VizslaLabElement extends LitElement {
         status: this.status,
         inspectorOpen: this.inspectorOpen,
         diagnosticsBusy: this.diagnosticsBusy,
+        fileDialog: this.fileDialog,
       },
       {
-        onScenarioChange: (event) => this.onScenarioChange(event),
+        createFile: () => this.createFile(),
+        renameFile: () => this.renameFile(),
+        deleteFile: () => this.deleteFile(),
+        updateFileDialogValue: (event) => this.updateFileDialogValue(event),
+        submitFileDialog: (event) => this.submitFileDialog(event),
+        closeFileDialog: () => this.closeFileDialog(),
         refreshDiagnostics: () => void this.refreshDiagnosticsNow(),
         resetScenario: () => this.resetScenario(),
         copySource: () => void this.copySource(),
@@ -257,7 +265,11 @@ export class VizslaLabElement extends LitElement {
     this.disposeModels();
     for (const file of scenario.files) {
       const uri = this.workspaceUri(file.path);
-      const model = this.monaco.editor.createModel(file.source, languageIdForPath(file.path), this.monaco.Uri.parse(uri));
+      const model = this.monaco.editor.createModel(
+        file.source,
+        file.languageId ?? languageIdForPath(file.path),
+        this.monaco.Uri.parse(uri),
+      );
       this.fileStates.set(uri, { file, uri, version: 1, model, opened: false });
     }
     this.activeUri = this.workspaceUri(entryFile(scenario).path);
@@ -414,27 +426,41 @@ export class VizslaLabElement extends LitElement {
   }
 
   private resetScenario(): void {
-    this.setScenario(this.activeScenario, true);
+    this.setScenario(this.initialScenario, true);
   }
 
-  private setScenario(scenario: VizslaScenario, force = false): void {
+  private setScenario(scenario: VizslaScenario, force = false, updateInitial = false, activePath?: string): void {
     if (!force && scenario.id === this.activeScenario.id) {
       return;
     }
+    const nextScenario = cloneScenario(scenario);
     this.disposeLanguageFeatures();
     this.client?.dispose();
     this.client = undefined;
     this.clientGeneration += 1;
     this.serverCapabilities = undefined;
-    this.activeScenario = scenario;
-    if (this.scenario !== scenario.id) {
-      this.scenario = scenario.id;
+    this.activeScenario = nextScenario;
+    if (updateInitial) {
+      this.initialScenario = cloneScenario(nextScenario);
+    }
+    if (this.scenario !== nextScenario.id) {
+      this.scenario = nextScenario.id;
     }
     this.diagnosticsByUri.clear();
-    this.createModels(scenario);
+    this.createModels(nextScenario);
+    if (activePath) {
+      const uri = this.workspaceUri(activePath);
+      if (this.fileStates.has(uri)) {
+        this.activeUri = uri;
+      }
+    }
     this.editor?.setModel(this.activeFileState()?.model ?? null);
     this.editor?.updateOptions({ readOnly: this.activeFileState()?.file.editable === false });
-    this.applyConfiguredState();
+    if (activePath) {
+      this.editor?.focus();
+    } else {
+      this.applyConfiguredState();
+    }
     this.restartClient();
     this.requestUpdate();
   }
@@ -600,12 +626,142 @@ export class VizslaLabElement extends LitElement {
     await navigator.clipboard.writeText(this.activeFileState()?.model.getValue() ?? "");
   }
 
-  private onScenarioChange(event: Event): void {
-    const select = event.currentTarget as HTMLSelectElement;
-    if (this.project && select.value !== this.project.id) {
-      this.project = undefined;
+  private createFile(): void {
+    this.fileDialog = { mode: "create", value: this.defaultNewFilePath() };
+    this.requestUpdate();
+  }
+
+  private renameFile(): void {
+    const state = this.activeFileState();
+    if (!state) {
+      return;
     }
-    this.setScenario(getScenario(select.value));
+
+    this.fileDialog = { mode: "rename", value: state.file.path, targetPath: state.file.path };
+    this.requestUpdate();
+  }
+
+  private deleteFile(): void {
+    const state = this.activeFileState();
+    if (!state) {
+      return;
+    }
+    if (this.activeScenario.files.length <= 1) {
+      this.fileDialog = {
+        mode: "delete",
+        value: state.file.path,
+        targetPath: state.file.path,
+        error: "The workspace must keep at least one file.",
+      };
+      this.requestUpdate();
+      return;
+    }
+
+    this.fileDialog = { mode: "delete", value: state.file.path, targetPath: state.file.path };
+    this.requestUpdate();
+  }
+
+  private updateFileDialogValue(event: Event): void {
+    if (!this.fileDialog || !(event.currentTarget instanceof HTMLInputElement)) {
+      return;
+    }
+    this.fileDialog = {
+      ...this.fileDialog,
+      value: event.currentTarget.value,
+      error: undefined,
+    };
+    this.requestUpdate();
+  }
+
+  private submitFileDialog(event: Event): void {
+    event.preventDefault();
+    const dialog = this.fileDialog;
+    if (!dialog) {
+      return;
+    }
+
+    if (dialog.mode === "delete") {
+      this.commitDeleteFile(dialog.targetPath);
+      return;
+    }
+
+    const path = this.validatedDialogPath(dialog);
+    if (!path) {
+      return;
+    }
+
+    if (dialog.mode === "create") {
+      this.commitCreateFile(path);
+    } else {
+      this.commitRenameFile(dialog.targetPath, path);
+    }
+  }
+
+  private closeFileDialog(): void {
+    this.fileDialog = undefined;
+    this.requestUpdate();
+    this.editor?.focus();
+  }
+
+  private commitCreateFile(path: string): void {
+    const files = [
+      ...this.currentWorkspaceFiles(),
+      {
+        path,
+        source: defaultSourceForPath(path),
+      },
+    ];
+    this.fileDialog = undefined;
+    this.setScenario({ ...this.activeScenario, files, entryFile: path }, true, false, path);
+  }
+
+  private commitRenameFile(currentPath: string | undefined, nextPath: string): void {
+    const state = this.activeFileState();
+    const fromPath = currentPath ?? state?.file.path;
+    if (!fromPath) {
+      this.setFileDialogError("No active file to rename.");
+      return;
+    }
+    if (nextPath === fromPath) {
+      this.fileDialog = undefined;
+      this.requestUpdate();
+      return;
+    }
+
+    const files = this.currentWorkspaceFiles().map((file) =>
+      file.path === fromPath
+        ? {
+            ...file,
+            path: nextPath,
+            languageId: file.languageId && languageIdForPath(nextPath) === "plaintext" ? file.languageId : undefined,
+          }
+        : file,
+    );
+    const entry = normalizeWorkspacePath(this.activeScenario.entryFile) === fromPath ? nextPath : this.activeScenario.entryFile;
+    this.fileDialog = undefined;
+    this.setScenario({ ...this.activeScenario, files, entryFile: entry }, true, false, nextPath);
+  }
+
+  private commitDeleteFile(path: string | undefined): void {
+    if (!path) {
+      this.setFileDialogError("No active file to delete.");
+      return;
+    }
+    const currentFiles = this.currentWorkspaceFiles();
+    if (currentFiles.length <= 1) {
+      this.setFileDialogError("The workspace must keep at least one file.");
+      return;
+    }
+    const deletedIndex = currentFiles.findIndex((file) => file.path === path);
+    if (deletedIndex < 0) {
+      this.setFileDialogError("The file is no longer in the workspace.");
+      return;
+    }
+    const files = currentFiles.filter((file) => file.path !== path);
+    const fallback = files[Math.min(deletedIndex, files.length - 1)] ?? files[0];
+    const entry = normalizeWorkspacePath(this.activeScenario.entryFile) === path ? fallback.path : this.activeScenario.entryFile;
+    this.fileDialog = undefined;
+    this.setScenario({ ...this.activeScenario, files, entryFile: entry }, true, false, fallback.path);
   }
 
   private toggleDiagnostics(): void {
@@ -657,11 +813,60 @@ export class VizslaLabElement extends LitElement {
     return this.project ?? getScenario(this.scenario);
   }
 
-  private availableScenarios(): VizslaScenario[] {
-    if (!this.project || SCENARIOS.some((scenario) => scenario.id === this.project?.id)) {
-      return SCENARIOS;
+  private currentWorkspaceFiles(): VizslaScenario["files"] {
+    return this.activeScenario.files.map((file) => {
+      const state = this.fileStates.get(this.workspaceUri(file.path));
+      return {
+        ...file,
+        source: state?.model.getValue() ?? file.source,
+      };
+    });
+  }
+
+  private hasWorkspacePath(path: string): boolean {
+    const normalized = normalizeWorkspacePath(path);
+    return this.activeScenario.files.some((file) => normalizeWorkspacePath(file.path) === normalized);
+  }
+
+  private validatedDialogPath(dialog: FileDialogState): string | undefined {
+    let path: string;
+    try {
+      path = normalizeWorkspacePath(dialog.value.trim());
+    } catch (error) {
+      this.setFileDialogError(error instanceof Error ? error.message : "Invalid workspace path.");
+      return undefined;
     }
-    return [this.project, ...SCENARIOS];
+
+    if (!path) {
+      this.setFileDialogError("Enter a file path inside the virtual workspace.");
+      return undefined;
+    }
+    if (this.hasWorkspacePath(path) && path !== dialog.targetPath) {
+      this.setFileDialogError(`A file already exists at '${path}'.`);
+      return undefined;
+    }
+
+    return path;
+  }
+
+  private setFileDialogError(error: string): void {
+    if (!this.fileDialog) {
+      return;
+    }
+    this.fileDialog = { ...this.fileDialog, error };
+    this.requestUpdate();
+  }
+
+  private defaultNewFilePath(): string {
+    for (let index = 1; index < 1000; index += 1) {
+      const suffix = index === 1 ? "" : `_${index}`;
+      const candidate = `rtl/new_module${suffix}.sv`;
+      if (!this.hasWorkspacePath(candidate)) {
+        return candidate;
+      }
+    }
+
+    return "new_file.sv";
   }
 
   private clearDiagnosticTimer(): void {
@@ -740,6 +945,33 @@ export class VizslaLabElement extends LitElement {
     }
     this.fileStates.clear();
   }
+}
+
+function cloneScenario(scenario: VizslaScenario): VizslaScenario {
+  return {
+    ...scenario,
+    files: scenario.files.map((file) => ({ ...file })),
+  };
+}
+
+function defaultSourceForPath(path: string): string {
+  const languageId = languageIdForPath(path);
+  if (languageId !== "verilog" && languageId !== "systemverilog") {
+    return "";
+  }
+
+  return `module ${moduleNameForPath(path)};
+endmodule
+`;
+}
+
+function moduleNameForPath(path: string): string {
+  const withoutExtension = fileName(path).replace(/\.[^.]+$/, "");
+  const normalized = withoutExtension.replace(/\W+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) {
+    return "new_module";
+  }
+  return /^\d/.test(normalized) ? `m_${normalized}` : normalized;
 }
 
 if (!customElements.get("vizsla-lab")) {

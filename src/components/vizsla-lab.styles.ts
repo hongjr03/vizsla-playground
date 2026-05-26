@@ -59,9 +59,6 @@ export const vizslaLabStyles: CSSResultGroup = [
     .file-strip,
     .file-strip button,
     .toolbar,
-    .select,
-    .select > span,
-    .toolbar select,
     .toolbar button,
     .drawer,
     .drawer-header,
@@ -71,7 +68,12 @@ export const vizslaLabStyles: CSSResultGroup = [
     .diagnostic,
     .status,
     .badge,
-    .status-dot {
+    .status-dot,
+    .dialog-backdrop,
+    .file-dialog,
+    .file-dialog *,
+    .file-dialog *::before,
+    .file-dialog *::after {
       box-sizing: border-box;
     }
 
@@ -215,22 +217,6 @@ export const vizslaLabStyles: CSSResultGroup = [
       background: var(--vzlab-panel);
     }
 
-    .select {
-      display: inline-flex;
-      align-items: center;
-    }
-
-    .select > span {
-      position: absolute;
-      width: 1px;
-      height: 1px;
-      margin: -1px;
-      overflow: hidden;
-      clip: rect(0, 0, 0, 0);
-      white-space: nowrap;
-    }
-
-    .toolbar select,
     .toolbar button,
     .drawer-header button,
     .status,
@@ -239,16 +225,6 @@ export const vizslaLabStyles: CSSResultGroup = [
         500 11px/1 "Cascadia Code",
         Consolas,
         monospace;
-    }
-
-    .toolbar select {
-      height: 28px;
-      min-width: 138px;
-      color: var(--vzlab-accent);
-      background: var(--vzlab-panel);
-      border: 1px solid var(--vzlab-border);
-      border-radius: 6px;
-      padding: 0 24px 0 8px;
     }
 
     .toolbar button,
@@ -274,8 +250,7 @@ export const vizslaLabStyles: CSSResultGroup = [
     .toolbar button:hover,
     .toolbar button:focus-visible,
     .drawer-header button:hover,
-    .drawer-header button:focus-visible,
-    .toolbar select:focus-visible {
+    .drawer-header button:focus-visible {
       background: var(--vzlab-muted-surface);
       border-color: var(--vzlab-ring);
       outline: none;
@@ -474,6 +449,168 @@ export const vizslaLabStyles: CSSResultGroup = [
       overflow-wrap: anywhere;
     }
 
+    .dialog-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(9, 9, 11, 0.38);
+      backdrop-filter: blur(5px);
+    }
+
+    .file-dialog {
+      width: min(460px, calc(100vw - 40px));
+      display: grid;
+      gap: 14px;
+      border: 1px solid var(--vzlab-border-strong);
+      border-radius: 8px;
+      background: var(--vzlab-panel);
+      color: var(--vzlab-accent);
+      padding: 14px;
+      box-shadow:
+        0 24px 64px rgba(24, 24, 27, 0.22),
+        0 4px 16px rgba(24, 24, 27, 0.14);
+    }
+
+    .file-dialog-header {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .file-dialog-header > div {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+
+    .file-dialog-header strong {
+      font-size: 13px;
+      line-height: 1.3;
+    }
+
+    .file-dialog-header span,
+    .file-dialog-field span,
+    .file-dialog-error,
+    .file-dialog-target {
+      color: var(--vzlab-muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .file-dialog-header .icon-button {
+      flex: 0 0 auto;
+      height: 28px;
+      min-width: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--vzlab-border);
+      border-radius: 6px;
+      background: var(--vzlab-panel);
+      color: var(--vzlab-accent);
+      cursor: pointer;
+    }
+
+    .file-dialog-header .icon-button:hover,
+    .file-dialog-header .icon-button:focus-visible {
+      background: var(--vzlab-muted-surface);
+      border-color: var(--vzlab-ring);
+      outline: none;
+    }
+
+    .file-dialog-header .icon-button svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .file-dialog-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .file-dialog-field input,
+    .file-dialog-target {
+      width: 100%;
+      border: 1px solid var(--vzlab-border);
+      border-radius: 6px;
+      background: var(--vzlab-editor);
+      color: var(--vzlab-accent);
+      font:
+        500 12px/1.4 "Cascadia Code",
+        Consolas,
+        monospace;
+      padding: 9px 10px;
+    }
+
+    .file-dialog-field input:focus {
+      border-color: var(--vzlab-ring);
+      outline: 2px solid color-mix(in srgb, var(--vzlab-ring), transparent 62%);
+      outline-offset: 1px;
+    }
+
+    .file-dialog-target {
+      margin: 0;
+      overflow-wrap: anywhere;
+    }
+
+    .file-dialog-error {
+      margin: -2px 0 0;
+      color: var(--vzlab-danger);
+    }
+
+    .file-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .file-dialog-actions button {
+      min-height: 30px;
+      border: 1px solid var(--vzlab-border);
+      border-radius: 6px;
+      cursor: pointer;
+      font:
+        600 12px/1 "Aptos",
+        "Segoe UI",
+        system-ui,
+        sans-serif;
+      padding: 0 11px;
+    }
+
+    .file-dialog-actions .secondary {
+      background: var(--vzlab-panel);
+      color: var(--vzlab-accent);
+    }
+
+    .file-dialog-actions .primary,
+    .file-dialog-actions .danger {
+      background: var(--vzlab-accent);
+      border-color: var(--vzlab-accent);
+      color: var(--vzlab-panel);
+    }
+
+    .file-dialog-actions .danger {
+      background: var(--vzlab-danger);
+      border-color: var(--vzlab-danger);
+      color: #ffffff;
+    }
+
+    .file-dialog-actions button:hover,
+    .file-dialog-actions button:focus-visible {
+      border-color: var(--vzlab-ring);
+      outline: none;
+    }
+
+    .file-dialog-actions button:disabled {
+      cursor: not-allowed;
+      opacity: 0.54;
+    }
+
     @media (max-width: 920px) {
       .workspace-row {
         grid-template-columns: 1fr;
@@ -504,6 +641,14 @@ export const vizslaLabStyles: CSSResultGroup = [
 
       .diagnostic span {
         white-space: normal;
+      }
+
+      .dialog-backdrop {
+        padding: 12px;
+      }
+
+      .file-dialog {
+        width: min(100%, 460px);
       }
     }
 
