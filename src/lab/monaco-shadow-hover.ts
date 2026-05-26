@@ -4,6 +4,7 @@ const HOVER_DELAY_MS = 260;
 const HOVER_HIDE_DELAY_MS = 320;
 const HOVER_START_MODE_IMMEDIATE = 1;
 const HOVER_START_SOURCE_MOUSE = 0;
+const INTERACTIVE_WIDGET_SELECTOR = ".monaco-hover, .workbench-hover-container, .context-view, .action-widget";
 
 interface HoverBridgeOptions {
   monaco: typeof Monaco;
@@ -33,6 +34,7 @@ export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco
   let showTimer: number | undefined;
   let hideTimer: number | undefined;
   let lastPoint: Point | undefined;
+  const ownerDocument = options.editor.getDomNode()?.ownerDocument ?? document;
 
   const controller = (): ContentHoverController | null =>
     options.editor.getContribution("editor.contrib.contentHover") as ContentHoverController | null;
@@ -73,7 +75,7 @@ export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco
   };
 
   const pointInsideHover = (point: Point | undefined): boolean => {
-    return pointInsideRect(point, hoverWidget()?.getDomNode() ?? null);
+    return pointInsideRect(point, hoverWidget()?.getDomNode() ?? null) || pointInsideInteractiveWidget(point);
   };
 
   const pointInsideInteractiveArea = (point: Point | undefined): boolean => pointInsideEditor(point) || pointInsideHover(point);
@@ -151,7 +153,15 @@ export function installShadowDomHoverBridge(options: HoverBridgeOptions): Monaco
     }, HOVER_DELAY_MS);
   };
 
-  const ownerDocument = options.editor.getDomNode()?.ownerDocument ?? document;
+  const pointInsideInteractiveWidget = (point: Point | undefined): boolean => {
+    if (!point) {
+      return false;
+    }
+    return [options.root.elementFromPoint(point.x, point.y), ownerDocument.elementFromPoint(point.x, point.y)].some((element) =>
+      element?.closest(INTERACTIVE_WIDGET_SELECTOR),
+    );
+  };
+
   const documentMouseMove = (event: MouseEvent) => {
     lastPoint = { x: event.clientX, y: event.clientY };
     syncKeepOpen(lastPoint);

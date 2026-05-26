@@ -30,6 +30,7 @@ export interface LabDiagnostic {
   filePath: string;
   range: LspRange;
   severity: LspSeverity;
+  tags?: number[];
   source: string;
   title: string;
   code?: string;

@@ -351,6 +351,10 @@ function codeActionDiagnostics(diagnostics: readonly LabDiagnostic[], range: Ret
       lspDiagnostic.code = diagnostic.rawCode ?? diagnostic.code;
     }
 
+    if (diagnostic.tags?.length) {
+      lspDiagnostic.tags = diagnostic.tags;
+    }
+
     if (diagnostic.data !== undefined) {
       lspDiagnostic.data = diagnostic.data;
     }

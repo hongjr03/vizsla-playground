@@ -109,6 +109,7 @@ function defineVizslaThemes(monacoModule: typeof monaco, semanticTokenTypes: rea
       "editorGutter.background": "#0a0a0a",
       "editorLineNumber.activeForeground": "#fafafa",
       "editor.lineHighlightBackground": "#18181b",
+      "editorUnnecessaryCode.opacity": "#00000099",
     },
   });
 
@@ -132,6 +133,7 @@ function defineVizslaThemes(monacoModule: typeof monaco, semanticTokenTypes: rea
       "editorGutter.background": "#ffffff",
       "editorLineNumber.activeForeground": "#18181b",
       "editor.lineHighlightBackground": "#f4f4f5",
+      "editorUnnecessaryCode.opacity": "#00000099",
     },
   });
 }

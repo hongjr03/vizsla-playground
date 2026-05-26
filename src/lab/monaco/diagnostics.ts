@@ -18,6 +18,7 @@ export function diagnosticsFromLspReport(result: unknown, uri: string, filePath:
       filePath,
       range: diagnostic.range,
       severity: diagnostic.severity ?? 3,
+      tags: diagnosticTags(diagnostic.tags),
       source,
       title: diagnosticName ?? source,
       code: diagnosticName ?? rawCode,
@@ -34,6 +35,7 @@ export function toMarkerData(monaco: MonacoModule, diagnostic: LabDiagnostic): M
     message: diagnostic.message,
     code: diagnostic.code,
     source: diagnostic.source,
+    tags: markerTags(monaco, diagnostic.tags),
     startLineNumber: diagnostic.range.start.line + 1,
     startColumn: diagnostic.range.start.character + 1,
     endLineNumber: diagnostic.range.end.line + 1,
@@ -54,10 +56,37 @@ function markerSeverity(monaco: MonacoModule, severity: LspSeverity): Monaco.Mar
   }
 }
 
+function markerTags(monaco: MonacoModule, tags: readonly number[] | undefined): Monaco.MarkerTag[] | undefined {
+  const markerTags: Monaco.MarkerTag[] = [];
+  if (tags?.includes(1)) {
+    markerTags.push(monaco.MarkerTag.Unnecessary);
+  }
+  if (tags?.includes(2)) {
+    markerTags.push(monaco.MarkerTag.Deprecated);
+  }
+  return markerTags.length > 0 ? markerTags : undefined;
+}
+
 function isLspDiagnostic(
   value: unknown,
-): value is { range: LspRange; severity?: LspSeverity; source?: unknown; code?: unknown; data?: unknown; message: string } {
+): value is {
+  range: LspRange;
+  severity?: LspSeverity;
+  tags?: unknown;
+  source?: unknown;
+  code?: unknown;
+  data?: unknown;
+  message: string;
+} {
   return isRecord(value) && isLspRange(value.range) && typeof value.message === "string";
+}
+
+function diagnosticTags(tags: unknown): number[] | undefined {
+  if (!Array.isArray(tags)) {
+    return undefined;
+  }
+  const result = tags.filter((tag): tag is number => tag === 1 || tag === 2);
+  return result.length > 0 ? result : undefined;
 }
 
 function lspCodeToString(code: unknown): string | undefined {
