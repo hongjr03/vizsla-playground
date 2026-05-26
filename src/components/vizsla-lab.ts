@@ -331,12 +331,6 @@ export class VizslaLabElement extends LitElement {
         this.syncLanguageServerCapabilities(capabilities);
       }
     };
-    client.onDiagnosticRefresh = () => {
-      if (generation !== this.clientGeneration || client !== this.client) {
-        return;
-      }
-      this.scheduleDiagnostics(this.sourceUris());
-    };
     client.onLog = (message, level) => {
       if (generation !== this.clientGeneration || client !== this.client) {
         return;

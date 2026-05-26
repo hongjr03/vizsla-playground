@@ -27,7 +27,6 @@ export class VizslaBrowserClient {
 
   onStatus: (status: WorkerStatus) => void = () => undefined;
   onServerCapabilities: (capabilities: unknown) => void = () => undefined;
-  onDiagnosticRefresh: () => void = () => undefined;
   onTrace: (entry: LspTraceEntry) => void = () => undefined;
   onLog: (message: string, level: "info" | "warn" | "error") => void = () => undefined;
 
