@@ -1,4 +1,4 @@
-import "vscode/localExtensionHost";
+import { defaultApi } from "vscode/localExtensionHost";
 import { initialize, type IWorkbenchConstructionOptions } from "@codingame/monaco-vscode-api";
 import { ExtensionHostKind, registerExtension } from "@codingame/monaco-vscode-api/extensions";
 import { waitServicesReady } from "@codingame/monaco-vscode-api/lifecycle";
@@ -22,7 +22,12 @@ const defaultApiExtension = registerExtension(
 export function startVizslaVscodePlatform(): Promise<void> {
   startPromise ??= initialize({}, undefined, workspaceConfiguration())
     .then(() => waitServicesReady())
-    .then(() => defaultApiExtension.setAsDefaultApi());
+    .then(async () => {
+      await defaultApiExtension.setAsDefaultApi();
+      if (!defaultApi) {
+        throw new Error("VS Code extension API default instance was not initialized.");
+      }
+    });
   return startPromise;
 }
 
