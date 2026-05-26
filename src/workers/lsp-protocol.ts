@@ -1,6 +1,7 @@
 export interface WasmEngine {
   send(message: LspMessage): LspMessage[];
   poll(): LspMessage[];
+  writeFile(path: string, text: string): void;
   reset(): void;
 }
 

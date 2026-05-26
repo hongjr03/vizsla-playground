@@ -78,6 +78,7 @@ export class VizslaLabElement extends LitElement {
   private inspectorOpen = false;
   private diagnosticsBusy = false;
   private fileDialog: FileDialogState | undefined;
+  private pendingSaveUris = new Set<string>();
   private diagnosticTimer: number | undefined;
   private diagnosticGeneration = 0;
   private clientGeneration = 0;
@@ -237,13 +238,16 @@ export class VizslaLabElement extends LitElement {
     this.editorDisposables.push(
       this.editor.onDidChangeModelContent(() => {
         const state = this.activeFileState();
-        if (!state || !isSourceFile(state.file.path)) {
+        if (!state) {
           return;
         }
         state.version += 1;
         this.openDocument(state);
-        this.client?.didChange(state.uri, state.model.getValue(), state.version);
-        this.scheduleDiagnostics(this.sourceUris(), true);
+        const text = state.model.getValue();
+        this.client?.writeFile(state.file.path, text);
+        this.client?.didChange(state.uri, text, state.version);
+        this.queueDocumentSave(state.uri);
+        this.scheduleDiagnostics(this.sourceUris());
       }),
       installShadowDomHoverBridge({
         monaco: this.monaco,
@@ -313,6 +317,7 @@ export class VizslaLabElement extends LitElement {
 
   private restartClient(): void {
     this.clearDiagnosticTimer();
+    this.pendingSaveUris.clear();
     this.disposeLanguageFeatures();
     this.client?.dispose();
     const generation = ++this.clientGeneration;
@@ -326,11 +331,11 @@ export class VizslaLabElement extends LitElement {
       }
       this.status = status;
       if (status.ready) {
-        this.openSourceDocuments();
+        this.openWorkspaceDocuments();
         if (this.serverCapabilities) {
           this.registerLanguageFeatures(this.serverCapabilities);
         }
-        this.scheduleDiagnostics(this.sourceUris(), false);
+        this.scheduleDiagnostics(this.sourceUris());
       }
       this.requestUpdate();
     };
@@ -347,7 +352,7 @@ export class VizslaLabElement extends LitElement {
       if (generation !== this.clientGeneration || client !== this.client) {
         return;
       }
-      this.scheduleDiagnostics(this.sourceUris(), false);
+      this.scheduleDiagnostics(this.sourceUris());
     };
     client.onLog = (message, level) => {
       if (generation !== this.clientGeneration || client !== this.client) {
@@ -359,35 +364,39 @@ export class VizslaLabElement extends LitElement {
     client.start(scenarioWorkspaceFiles(this.activeScenario));
   }
 
-  private openSourceDocuments(): void {
+  private openWorkspaceDocuments(): void {
     for (const state of this.fileStates.values()) {
-      if (isSourceFile(state.file.path)) {
-        this.openDocument(state);
-      }
+      this.openDocument(state);
     }
   }
 
   private openDocument(state: LabFileState): void {
-    if (state.opened || !isSourceFile(state.file.path)) {
+    if (state.opened) {
       return;
     }
-    this.client?.didOpen(state.uri, languageIdForPath(state.file.path), state.model.getValue(), state.version);
+    this.client?.didOpen(state.uri, state.file.languageId ?? languageIdForPath(state.file.path), state.model.getValue(), state.version);
     state.opened = true;
   }
 
   private async refreshDiagnosticsNow(): Promise<void> {
-    await this.refreshDiagnostics(this.sourceUris(), false);
+    await this.refreshDiagnostics(this.sourceUris());
   }
 
-  private scheduleDiagnostics(uris: string[], autosave: boolean): void {
+  private queueDocumentSave(uri: string): void {
+    this.pendingSaveUris.add(uri);
+  }
+
+  private scheduleDiagnostics(uris: string[]): void {
     this.clearDiagnosticTimer();
     this.diagnosticTimer = window.setTimeout(() => {
-      void this.refreshDiagnostics(uris, autosave);
+      const saveUris = [...this.pendingSaveUris];
+      this.pendingSaveUris.clear();
+      void this.refreshDiagnostics(uris, saveUris);
     }, DIAGNOSTIC_DEBOUNCE_MS);
   }
 
-  private async refreshDiagnostics(uris: string[], autosave: boolean): Promise<void> {
-    if (!this.client || !this.status.ready || uris.length === 0) {
+  private async refreshDiagnostics(uris: string[], saveUris: string[] = []): Promise<void> {
+    if (!this.client || !this.status.ready || (uris.length === 0 && saveUris.length === 0)) {
       return;
     }
 
@@ -396,15 +405,21 @@ export class VizslaLabElement extends LitElement {
     this.requestUpdate();
 
     try {
+      for (const uri of saveUris) {
+        const state = this.fileStates.get(uri);
+        if (!state) {
+          continue;
+        }
+        this.openDocument(state);
+        this.client.didSave(uri);
+      }
+
       for (const uri of uris) {
         const state = this.fileStates.get(uri);
         if (!state || !isSourceFile(state.file.path)) {
           continue;
         }
         this.openDocument(state);
-        if (autosave) {
-          this.client.didSave(uri);
-        }
         const report = await this.client.request("textDocument/diagnostic", {
           textDocument: { uri },
           previousResultId: null,
@@ -485,7 +500,7 @@ export class VizslaLabElement extends LitElement {
     this.editor.updateOptions({ readOnly: state.file.editable === false });
     this.openDocument(state);
     if (isSourceFile(state.file.path)) {
-      this.scheduleDiagnostics(this.sourceUris(), false);
+      this.scheduleDiagnostics(this.sourceUris());
     }
     this.requestUpdate();
   }

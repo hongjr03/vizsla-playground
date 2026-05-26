@@ -40,6 +40,10 @@ async function handleRequest(message: WorkerRequest): Promise<void> {
       }
       trace("server", "initialized", status.detail);
       break;
+    case "writeFile":
+      requireEngine().writeFile(message.file.path, message.file.text);
+      trace("client", "writeFile", message.file.path);
+      break;
     case "lspNotification": {
       const notification: LspNotification = {
         jsonrpc: "2.0",
