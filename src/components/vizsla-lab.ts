@@ -268,7 +268,6 @@ export class VizslaLabElement extends LitElement {
         if (!state) {
           return;
         }
-        state.version += 1;
         const text = state.model.getValue();
         this.client?.writeFile(state.file.path, text);
         this.queueDocumentSave(state.uri);
@@ -299,7 +298,7 @@ export class VizslaLabElement extends LitElement {
         file.languageId ?? languageIdForPath(file.path),
         this.monaco.Uri.parse(uri),
       );
-      this.fileStates.set(uri, { file, uri, version: 1, model });
+      this.fileStates.set(uri, { file, uri, model });
     }
     this.activeUri = this.workspaceUri(entryFile(scenario).path);
   }

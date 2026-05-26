@@ -8,7 +8,6 @@ const SOURCE_EXTENSIONS = new Set([".v", ".vh", ".sv", ".svh", ".svi"]);
 export interface LabFileState {
   file: VizslaScenarioFile;
   uri: string;
-  version: number;
   model: Monaco.editor.ITextModel;
 }
 
