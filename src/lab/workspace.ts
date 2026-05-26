@@ -10,7 +10,6 @@ export interface LabFileState {
   uri: string;
   version: number;
   model: Monaco.editor.ITextModel;
-  opened: boolean;
 }
 
 export function scenarioWorkspaceFiles(scenario: VizslaScenario): WorkerWorkspaceFile[] {

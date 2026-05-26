@@ -299,7 +299,7 @@ export class VizslaLabElement extends LitElement {
         file.languageId ?? languageIdForPath(file.path),
         this.monaco.Uri.parse(uri),
       );
-      this.fileStates.set(uri, { file, uri, version: 1, model, opened: false });
+      this.fileStates.set(uri, { file, uri, version: 1, model });
     }
     this.activeUri = this.workspaceUri(entryFile(scenario).path);
   }
