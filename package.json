@@ -23,7 +23,7 @@
     "lit": "^3.3.3",
     "lucide": "^1.16.0",
     "monaco-editor": "^0.55.1",
-    "monaco-languageclient": "10.7.0",
+    "vscode": "npm:@codingame/monaco-vscode-extension-api@33.0.9",
     "vscode-languageclient": "9.0.1",
     "vscode-languageserver-protocol": "3.17.5",
     "vscode-oniguruma": "^2.0.1",
