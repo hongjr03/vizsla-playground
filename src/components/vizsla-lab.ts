@@ -3,6 +3,7 @@ import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { FileStripScrollController } from "./file-strip-scroll";
 import { renderVizslaLabView, type FileDialogState } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
+import { LabEditorWorkspace } from "../lab/editor-workspace";
 import { VizslaBrowserClient } from "../lab/lsp-client";
 import { diagnosticsFromLspReport, toMarkerData } from "../lab/monaco-lsp";
 import { installShadowDomHoverBridge } from "../lab/monaco-shadow-hover";
@@ -16,14 +17,10 @@ import {
 } from "../lab/monaco-setup";
 import {
   displayPath,
-  entryFile,
   isSourceFile,
-  languageIdForPath,
   normalizeWorkspacePath,
   scenarioWorkspaceFiles,
-  sourceFiles,
   workspaceUri,
-  type LabFileState,
 } from "../lab/workspace";
 import {
   cloneScenario,
@@ -74,11 +71,10 @@ export class VizslaLabElement extends LitElement {
   private editor?: Monaco.editor.IStandaloneCodeEditor;
   private client?: VizslaBrowserClient;
   private editorDisposables: Monaco.IDisposable[] = [];
-  private fileStates = new Map<string, LabFileState>();
+  private editorWorkspace?: LabEditorWorkspace;
   private activeScenario: VizslaScenario = getScenario("counter");
   private initialScenario: VizslaScenario = cloneScenario(getScenario("counter"));
   private readonly workspaceRootUri = `file:///workspace-${Math.random().toString(36).slice(2)}`;
-  private activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
   private diagnosticsByUri = new Map<string, LabDiagnostic[]>();
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
@@ -118,7 +114,6 @@ export class VizslaLabElement extends LitElement {
   protected firstUpdated(): void {
     this.activeScenario = cloneScenario(this.resolvedScenario());
     this.initialScenario = cloneScenario(this.activeScenario);
-    this.activeUri = this.workspaceUri(entryFile(this.activeScenario).path);
     this.inspectorOpen = this.diagnosticsOpen;
     this.installThemeSync();
     this.syncColorScheme();
@@ -177,7 +172,7 @@ export class VizslaLabElement extends LitElement {
     this.fileStripScroll.dispose();
     this.disposeEditorDisposables();
     this.editor?.dispose();
-    this.disposeModels();
+    this.editorWorkspace?.dispose();
     this.client?.dispose();
     this.themeObserver?.disconnect();
     this.removeThemeMediaListener();
@@ -187,7 +182,7 @@ export class VizslaLabElement extends LitElement {
     return renderVizslaLabView(
       {
         activeScenario: this.activeScenario,
-        activeUri: this.activeUri,
+        activeUri: this.editorWorkspace?.activeUri ?? "",
         workspaceRootUri: this.workspaceRootUri,
         diagnosticsByUri: this.diagnosticsByUri,
         status: this.status,
@@ -249,7 +244,7 @@ export class VizslaLabElement extends LitElement {
             return false;
           }
 
-          const target = this.fileStates.get(resource.toString());
+          const target = this.editorWorkspace?.state(resource.toString());
           if (!target || !this.editor) {
             return false;
           }
@@ -290,17 +285,11 @@ export class VizslaLabElement extends LitElement {
     if (!this.monaco) {
       return;
     }
-    this.disposeModels();
-    for (const file of scenario.files) {
-      const uri = this.workspaceUri(file.path);
-      const model = this.monaco.editor.createModel(
-        file.source,
-        file.languageId ?? languageIdForPath(file.path),
-        this.monaco.Uri.parse(uri),
-      );
-      this.fileStates.set(uri, { file, uri, model });
+    if (!this.editorWorkspace) {
+      this.editorWorkspace = new LabEditorWorkspace(this.monaco, this.workspaceRootUri, scenario);
+      return;
     }
-    this.activeUri = this.workspaceUri(entryFile(scenario).path);
+    this.editorWorkspace.replaceScenario(scenario);
   }
 
   private syncLanguageServerCapabilities(serverCapabilities: unknown): void {
@@ -386,7 +375,7 @@ export class VizslaLabElement extends LitElement {
 
     try {
       for (const uri of saveUris) {
-        const state = this.fileStates.get(uri);
+        const state = this.editorWorkspace?.state(uri);
         if (!state) {
           continue;
         }
@@ -394,7 +383,7 @@ export class VizslaLabElement extends LitElement {
       }
 
       for (const uri of uris) {
-        const state = this.fileStates.get(uri);
+        const state = this.editorWorkspace?.state(uri);
         if (!state || !isSourceFile(state.file.path)) {
           continue;
         }
@@ -441,10 +430,7 @@ export class VizslaLabElement extends LitElement {
     this.diagnosticsByUri.clear();
     this.createModels(nextScenario);
     if (activePath) {
-      const uri = this.workspaceUri(activePath);
-      if (this.fileStates.has(uri)) {
-        this.activeUri = uri;
-      }
+      this.editorWorkspace?.setActivePath(activePath);
     }
     this.editor?.setModel(this.activeFileState()?.model ?? null);
     this.editor?.updateOptions({ readOnly: this.activeFileState()?.file.editable === false });
@@ -463,11 +449,10 @@ export class VizslaLabElement extends LitElement {
   }
 
   private activateFile(uri: string): void {
-    const state = this.fileStates.get(uri);
+    const state = this.editorWorkspace?.setActiveUri(uri);
     if (!state || !this.editor) {
       return;
     }
-    this.activeUri = uri;
     this.editor.setModel(state.model);
     this.editor.updateOptions({ readOnly: state.file.editable === false });
     if (isSourceFile(state.file.path)) {
@@ -486,7 +471,7 @@ export class VizslaLabElement extends LitElement {
 
   private applyConfiguredFile(): void {
     const uri = this.configuredActiveUri();
-    if (!uri || uri === this.activeUri) {
+    if (!uri || uri === this.editorWorkspace?.activeUri) {
       return;
     }
     this.activateFile(uri);
@@ -505,7 +490,7 @@ export class VizslaLabElement extends LitElement {
       return undefined;
     }
 
-    if (!this.fileStates.has(uri)) {
+    if (!this.editorWorkspace?.state(uri)) {
       console.warn(`active-file '${this.activeFile}' is not part of scenario '${this.activeScenario.id}'.`);
       return undefined;
     }
@@ -593,7 +578,7 @@ export class VizslaLabElement extends LitElement {
   }
 
   private revealDiagnostic(diagnostic: LabDiagnostic): void {
-    const state = this.fileStates.get(diagnostic.uri);
+    const state = this.editorWorkspace?.state(diagnostic.uri);
     if (!state || !this.editor) {
       return;
     }
@@ -743,7 +728,7 @@ export class VizslaLabElement extends LitElement {
     if (!this.monaco) {
       return;
     }
-    const state = this.fileStates.get(uri);
+    const state = this.editorWorkspace?.state(uri);
     if (!state) {
       return;
     }
@@ -755,21 +740,20 @@ export class VizslaLabElement extends LitElement {
     );
   }
 
-  private activeFileState(): LabFileState | undefined {
-    return this.fileStates.get(this.activeUri);
+  private activeFileState() {
+    return this.editorWorkspace?.activeState();
   }
 
   private ownsSourceModel(model: Monaco.editor.ITextModel): boolean {
-    const state = this.fileStates.get(model.uri.toString());
-    return !!state && isSourceFile(state.file.path);
+    return this.editorWorkspace?.ownsSourceModel(model) ?? false;
   }
 
   private sourceUris(): string[] {
-    return sourceFiles(this.activeScenario).map((file) => this.workspaceUri(file.path));
+    return this.editorWorkspace?.sourceUris() ?? [];
   }
 
   private workspaceUri(path: string): string {
-    return workspaceUri(path, this.workspaceRootUri);
+    return this.editorWorkspace?.uriForPath(path) ?? workspaceUri(path, this.workspaceRootUri);
   }
 
   private resolvedScenario(): VizslaScenario {
@@ -777,16 +761,13 @@ export class VizslaLabElement extends LitElement {
   }
 
   private currentWorkspaceFiles(): VizslaScenario["files"] {
-    return this.activeScenario.files.map((file) => {
-      const state = this.fileStates.get(this.workspaceUri(file.path));
-      return {
-        ...file,
-        source: state?.model.getValue() ?? file.source,
-      };
-    });
+    return this.editorWorkspace?.currentFiles(this.activeScenario) ?? this.activeScenario.files;
   }
 
   private hasWorkspacePath(path: string): boolean {
+    if (this.editorWorkspace) {
+      return this.editorWorkspace.hasPath(path);
+    }
     const normalized = normalizeWorkspacePath(path);
     return this.activeScenario.files.some((file) => normalizeWorkspacePath(file.path) === normalized);
   }
@@ -894,12 +875,6 @@ export class VizslaLabElement extends LitElement {
     this.style.setProperty("--vzlab-height", this.height || (this.docs ? "430px" : "100dvh"));
   }
 
-  private disposeModels(): void {
-    for (const state of this.fileStates.values()) {
-      state.model.dispose();
-    }
-    this.fileStates.clear();
-  }
 }
 
 if (!customElements.get("vizsla-lab")) {
