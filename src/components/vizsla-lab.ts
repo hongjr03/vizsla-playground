@@ -3,9 +3,10 @@ import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { FileStripScrollController } from "./file-strip-scroll";
 import { renderVizslaLabView, type FileDialogState } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
+import { LabDiagnosticController } from "../lab/diagnostics";
 import { LabEditorWorkspace } from "../lab/editor-workspace";
 import { VizslaBrowserClient } from "../lab/lsp-client";
-import { diagnosticsFromLspReport, toMarkerData } from "../lab/monaco-lsp";
+import { toMarkerData } from "../lab/monaco-lsp";
 import { installShadowDomHoverBridge } from "../lab/monaco-shadow-hover";
 import {
   configureMonaco,
@@ -15,13 +16,7 @@ import {
   wireVizslaVscodeLanguage,
   type VizslaColorScheme,
 } from "../lab/monaco-setup";
-import {
-  displayPath,
-  isSourceFile,
-  normalizeWorkspacePath,
-  scenarioWorkspaceFiles,
-  workspaceUri,
-} from "../lab/workspace";
+import { isSourceFile, normalizeWorkspacePath, scenarioWorkspaceFiles, workspaceUri } from "../lab/workspace";
 import {
   cloneScenario,
   createFileScenario,
@@ -75,18 +70,21 @@ export class VizslaLabElement extends LitElement {
   private activeScenario: VizslaScenario = getScenario("counter");
   private initialScenario: VizslaScenario = cloneScenario(getScenario("counter"));
   private readonly workspaceRootUri = `file:///workspace-${Math.random().toString(36).slice(2)}`;
-  private diagnosticsByUri = new Map<string, LabDiagnostic[]>();
   private status: WorkerStatus = { engine: "unavailable", ready: false, detail: "Starting Vizsla WASM engine." };
   private inspectorOpen = false;
-  private diagnosticsBusy = false;
   private readonly fileStripScroll = new FileStripScrollController(
     () => this.renderRoot,
     () => this.requestUpdate(),
   );
+  private readonly diagnostics = new LabDiagnosticController({
+    debounceMs: DIAGNOSTIC_DEBOUNCE_MS,
+    client: () => this.client,
+    ready: () => this.status.ready,
+    state: (uri) => this.editorWorkspace?.state(uri),
+    onDidChange: () => this.requestUpdate(),
+    onMarkersChanged: (uri) => this.applyMarkers(uri),
+  });
   private fileDialog: FileDialogState | undefined;
-  private pendingSaveUris = new Set<string>();
-  private diagnosticTimer: number | undefined;
-  private diagnosticGeneration = 0;
   private clientGeneration = 0;
   private serverCapabilities: unknown;
   private colorScheme: VizslaColorScheme = "dark";
@@ -168,11 +166,11 @@ export class VizslaLabElement extends LitElement {
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
-    this.clearDiagnosticTimer();
     this.fileStripScroll.dispose();
     this.disposeEditorDisposables();
     this.editor?.dispose();
     this.editorWorkspace?.dispose();
+    this.diagnostics.dispose();
     this.client?.dispose();
     this.themeObserver?.disconnect();
     this.removeThemeMediaListener();
@@ -184,10 +182,10 @@ export class VizslaLabElement extends LitElement {
         activeScenario: this.activeScenario,
         activeUri: this.editorWorkspace?.activeUri ?? "",
         workspaceRootUri: this.workspaceRootUri,
-        diagnosticsByUri: this.diagnosticsByUri,
+        diagnosticsByUri: this.diagnostics.diagnosticsByUri,
         status: this.status,
         inspectorOpen: this.inspectorOpen,
-        diagnosticsBusy: this.diagnosticsBusy,
+        diagnosticsBusy: this.diagnostics.busy,
         ...this.fileStripScroll.state,
         fileDialog: this.fileDialog,
       },
@@ -263,7 +261,7 @@ export class VizslaLabElement extends LitElement {
         if (!state) {
           return;
         }
-        this.queueDocumentSave(state.uri);
+        this.diagnostics.queueSave(state.uri);
         this.scheduleDiagnostics(this.sourceUris());
       }),
       installShadowDomHoverBridge({
@@ -299,8 +297,7 @@ export class VizslaLabElement extends LitElement {
   }
 
   private restartClient(): void {
-    this.clearDiagnosticTimer();
-    this.pendingSaveUris.clear();
+    this.diagnostics.clearPending();
     this.client?.dispose();
     const generation = ++this.clientGeneration;
     const client = new VizslaBrowserClient(this.wasmBaseUrl, this.workspaceRootUri);
@@ -340,63 +337,11 @@ export class VizslaLabElement extends LitElement {
   }
 
   private async refreshDiagnosticsNow(): Promise<void> {
-    await this.refreshDiagnostics(this.sourceUris());
-  }
-
-  private queueDocumentSave(uri: string): void {
-    this.pendingSaveUris.add(uri);
+    await this.diagnostics.refresh(this.sourceUris());
   }
 
   private scheduleDiagnostics(uris: string[]): void {
-    this.clearDiagnosticTimer();
-    this.diagnosticTimer = window.setTimeout(() => {
-      const saveUris = [...this.pendingSaveUris];
-      this.pendingSaveUris.clear();
-      void this.refreshDiagnostics(uris, saveUris);
-    }, DIAGNOSTIC_DEBOUNCE_MS);
-  }
-
-  private async refreshDiagnostics(uris: string[], saveUris: string[] = []): Promise<void> {
-    if (!this.client || !this.status.ready || (uris.length === 0 && saveUris.length === 0)) {
-      return;
-    }
-
-    const generation = ++this.diagnosticGeneration;
-    this.diagnosticsBusy = true;
-    this.requestUpdate();
-
-    try {
-      for (const uri of saveUris) {
-        const state = this.editorWorkspace?.state(uri);
-        if (!state) {
-          continue;
-        }
-        this.client.didSave(uri);
-      }
-
-      for (const uri of uris) {
-        const state = this.editorWorkspace?.state(uri);
-        if (!state || !isSourceFile(state.file.path)) {
-          continue;
-        }
-        const report = await this.client.request("textDocument/diagnostic", {
-          textDocument: { uri },
-          previousResultId: null,
-        });
-        if (generation !== this.diagnosticGeneration) {
-          return;
-        }
-        this.diagnosticsByUri.set(uri, diagnosticsFromLspReport(report, uri, displayPath(state.file.path)));
-        this.applyMarkers(uri);
-      }
-    } catch (error) {
-      console.error(error instanceof Error ? error.message : "Diagnostics failed.");
-    } finally {
-      if (generation === this.diagnosticGeneration) {
-        this.diagnosticsBusy = false;
-        this.requestUpdate();
-      }
-    }
+    this.diagnostics.schedule(uris);
   }
 
   private resetScenario(): void {
@@ -419,7 +364,7 @@ export class VizslaLabElement extends LitElement {
     if (this.scenario !== nextScenario.id) {
       this.scenario = nextScenario.id;
     }
-    this.diagnosticsByUri.clear();
+    this.diagnostics.reset();
     this.createModels(nextScenario);
     if (activePath) {
       this.editorWorkspace?.setActivePath(activePath);
@@ -724,7 +669,7 @@ export class VizslaLabElement extends LitElement {
     if (!state) {
       return;
     }
-    const diagnostics = this.diagnosticsByUri.get(uri) ?? [];
+    const diagnostics = this.diagnostics.diagnosticsByUri.get(uri) ?? [];
     this.monaco.editor.setModelMarkers(
       state.model,
       "vizsla",
@@ -795,13 +740,6 @@ export class VizslaLabElement extends LitElement {
 
   private defaultNewFilePath(): string {
     return defaultNewFilePath((path) => this.hasWorkspacePath(path));
-  }
-
-  private clearDiagnosticTimer(): void {
-    if (this.diagnosticTimer !== undefined) {
-      window.clearTimeout(this.diagnosticTimer);
-      this.diagnosticTimer = undefined;
-    }
   }
 
   private installThemeSync(): void {
