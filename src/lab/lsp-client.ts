@@ -1,3 +1,4 @@
+import "vscode/localExtensionHost";
 import * as vscode from "vscode";
 import VizslaWorker from "../workers/vizsla-lsp.worker?worker&inline";
 import type { LspTraceEntry, WorkerRequest, WorkerResponse, WorkerStatus, WorkerWorkspaceFile } from "../types";
