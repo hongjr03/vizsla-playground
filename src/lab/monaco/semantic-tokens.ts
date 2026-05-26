@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { isRecord, numberValue, numericArray, stringValue } from "./guards";
 
 export function toSemanticTokens(result: unknown): Monaco.languages.SemanticTokens | Monaco.languages.SemanticTokensEdits | null {

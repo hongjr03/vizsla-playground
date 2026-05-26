@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import type { MonacoModule } from "./types";
 import { booleanValue, isRecord, stringValue } from "./guards";
 import { toWorkspaceEdit } from "./edits";

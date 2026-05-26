@@ -1,8 +1,9 @@
-import * as monaco from "monaco-editor";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker&inline";
+import * as monaco from "@codingame/monaco-vscode-editor-api";
+import EditorWorker from "@codingame/monaco-vscode-editor-api/esm/vs/editor/editor.worker?worker&inline";
 import { createOnigScanner, createOnigString, loadWASM } from "vscode-oniguruma";
 import onigWasm from "vscode-oniguruma/release/onig.wasm?url";
 import { INITIAL, parseRawGrammar, Registry, type IOnigLib, type StateStack } from "vscode-textmate";
+import { startVizslaVscodePlatform } from "./vscode-platform";
 
 let configured = false;
 let cancellationBoundaryInstalled = false;
@@ -12,7 +13,9 @@ let activeColorScheme: VizslaColorScheme = "dark";
 
 export type VizslaColorScheme = "light" | "dark";
 
-export function configureMonaco(): typeof monaco {
+export async function configureMonaco(): Promise<typeof monaco> {
+  await startVizslaVscodePlatform();
+
   if (!configured) {
     installExpectedCancellationBoundary();
     installShadowCaretRangeFromPoint();

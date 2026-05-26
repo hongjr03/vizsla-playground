@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import type { LabDiagnostic } from "../types";
 import type { LspRequest, MonacoModule } from "./monaco";
 import {

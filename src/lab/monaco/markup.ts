@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { isDefined, isRecord, stringValue } from "./guards";
 
 export function markupContents(value: unknown): Monaco.IMarkdownString[] {

@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { arrayOf, isRecord, numberValue, stringValue } from "./guards";
 import { markupContent } from "./markup";
 

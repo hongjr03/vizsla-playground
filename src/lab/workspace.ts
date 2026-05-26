@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import type { VizslaScenario, VizslaScenarioFile, WorkerWorkspaceFile } from "../types";
 
 export const DEFAULT_WORKSPACE_ROOT_URI = "file:///workspace";

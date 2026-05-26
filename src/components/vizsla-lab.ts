@@ -1,5 +1,5 @@
 import { LitElement, type PropertyValues, type TemplateResult } from "lit";
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { renderVizslaLabView, type FileDialogState } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
 import { isClientDisposedError, VizslaBrowserClient } from "../lab/lsp-client";
@@ -132,10 +132,20 @@ export class VizslaLabElement extends LitElement {
     this.installThemeSync();
     this.syncColorScheme();
     this.syncLabHeight();
-    this.mountEditor();
-    this.applyConfiguredState();
-    this.restartClient();
-    this.queueFileStripMeasurement();
+    void this.mountEditor()
+      .then(() => {
+        this.applyConfiguredState();
+        this.restartClient();
+        this.queueFileStripMeasurement();
+      })
+      .catch((error: unknown) => {
+        this.status = {
+          engine: "unavailable",
+          ready: false,
+          detail: error instanceof Error ? error.message : "Failed to start the editor runtime.",
+        };
+        this.requestUpdate();
+      });
   }
 
   protected updated(changed: PropertyValues<this>): void {
@@ -222,8 +232,8 @@ export class VizslaLabElement extends LitElement {
     );
   }
 
-  private mountEditor(): void {
-    this.monaco = configureMonaco();
+  private async mountEditor(): Promise<void> {
+    this.monaco = await configureMonaco();
     const editorHost = this.renderRoot.querySelector<HTMLElement>(".editor");
     if (!editorHost) {
       return;
@@ -243,7 +253,7 @@ export class VizslaLabElement extends LitElement {
       tabSize: 2,
       padding: { top: 14, bottom: 14 },
       fixedOverflowWidgets: true,
-      hover: { enabled: true, delay: 250, sticky: true },
+      hover: { enabled: "on", delay: 250, sticky: true },
       "semanticHighlighting.enabled": true,
     });
 

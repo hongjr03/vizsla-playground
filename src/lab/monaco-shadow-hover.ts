@@ -1,4 +1,4 @@
-import type * as Monaco from "monaco-editor";
+import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 
 const HOVER_DELAY_MS = 260;
 const HOVER_HIDE_DELAY_MS = 320;
