@@ -2,8 +2,8 @@ import { LitElement, type PropertyValues, type TemplateResult } from "lit";
 import type * as Monaco from "@codingame/monaco-vscode-editor-api";
 import { renderVizslaLabView, type FileDialogState } from "./vizsla-lab.view";
 import { vizslaLabStyles } from "./vizsla-lab.styles";
-import { isClientDisposedError, VizslaBrowserClient } from "../lab/lsp-client";
-import { diagnosticsFromLspReport, registerVizslaLspProviders, toMarkerData } from "../lab/monaco-lsp";
+import { VizslaBrowserClient } from "../lab/lsp-client";
+import { diagnosticsFromLspReport, toMarkerData } from "../lab/monaco-lsp";
 import { installShadowDomHoverBridge } from "../lab/monaco-shadow-hover";
 import {
   configureMonaco,
@@ -67,7 +67,6 @@ export class VizslaLabElement extends LitElement {
   private monaco?: typeof Monaco;
   private editor?: Monaco.editor.IStandaloneCodeEditor;
   private client?: VizslaBrowserClient;
-  private providerDisposables: Monaco.IDisposable[] = [];
   private editorDisposables: Monaco.IDisposable[] = [];
   private fileStates = new Map<string, LabFileState>();
   private activeScenario: VizslaScenario = getScenario("counter");
@@ -185,7 +184,6 @@ export class VizslaLabElement extends LitElement {
     this.clearDiagnosticTimer();
     this.clearFileStripTimers();
     this.removeFileStripDragListeners();
-    this.disposeLanguageFeatures();
     this.disposeEditorDisposables();
     this.editor?.dispose();
     this.disposeModels();
@@ -284,10 +282,8 @@ export class VizslaLabElement extends LitElement {
           return;
         }
         state.version += 1;
-        this.openDocument(state);
         const text = state.model.getValue();
         this.client?.writeFile(state.file.path, text);
-        this.client?.didChange(state.uri, text, state.version);
         this.queueDocumentSave(state.uri);
         this.scheduleDiagnostics(this.sourceUris());
       }),
@@ -321,46 +317,17 @@ export class VizslaLabElement extends LitElement {
     this.activeUri = this.workspaceUri(entryFile(scenario).path);
   }
 
-  private registerLanguageFeatures(serverCapabilities: unknown): void {
-    const client = this.client;
-    if (!this.monaco || !client || !this.status.ready) {
+  private syncLanguageServerCapabilities(serverCapabilities: unknown): void {
+    if (!this.monaco || !this.status.ready) {
       return;
     }
 
-    this.disposeLanguageFeatures();
     syncVizslaSemanticTheme(this.monaco, serverCapabilities, this.colorScheme);
-    const commonOptions = {
-      monaco: this.monaco,
-      serverCapabilities,
-      ownsModel: (model: Monaco.editor.ITextModel) => this.ownsSourceModel(model),
-      uriForModel: (model: Monaco.editor.ITextModel) => model.uri.toString(),
-      diagnosticsForModel: (model: Monaco.editor.ITextModel) => this.diagnosticsByUri.get(model.uri.toString()) ?? [],
-      request: async (method: string, params?: unknown) => {
-        if (client !== this.client || !this.status.ready) {
-          return null;
-        }
-        try {
-          return await client.request(method, params);
-        } catch (error) {
-          if (client === this.client && !isClientDisposedError(error)) {
-            console.warn(error instanceof Error ? error.message : "LSP request failed.");
-          }
-          return null;
-        }
-      },
-    };
-    this.providerDisposables = ["systemverilog", "verilog"].flatMap((languageId) =>
-      registerVizslaLspProviders({
-        ...commonOptions,
-        languageId,
-      }),
-    );
   }
 
   private restartClient(): void {
     this.clearDiagnosticTimer();
     this.pendingSaveUris.clear();
-    this.disposeLanguageFeatures();
     this.client?.dispose();
     const generation = ++this.clientGeneration;
     const client = new VizslaBrowserClient(this.wasmBaseUrl, this.workspaceRootUri);
@@ -373,9 +340,8 @@ export class VizslaLabElement extends LitElement {
       }
       this.status = status;
       if (status.ready) {
-        this.openWorkspaceDocuments();
         if (this.serverCapabilities) {
-          this.registerLanguageFeatures(this.serverCapabilities);
+          this.syncLanguageServerCapabilities(this.serverCapabilities);
         }
         this.scheduleDiagnostics(this.sourceUris());
       }
@@ -387,7 +353,7 @@ export class VizslaLabElement extends LitElement {
       }
       this.serverCapabilities = capabilities;
       if (this.status.ready) {
-        this.registerLanguageFeatures(capabilities);
+        this.syncLanguageServerCapabilities(capabilities);
       }
     };
     client.onDiagnosticRefresh = () => {
@@ -404,20 +370,6 @@ export class VizslaLabElement extends LitElement {
       logger(message);
     };
     client.start(scenarioWorkspaceFiles(this.activeScenario));
-  }
-
-  private openWorkspaceDocuments(): void {
-    for (const state of this.fileStates.values()) {
-      this.openDocument(state);
-    }
-  }
-
-  private openDocument(state: LabFileState): void {
-    if (state.opened) {
-      return;
-    }
-    this.client?.didOpen(state.uri, state.file.languageId ?? languageIdForPath(state.file.path), state.model.getValue(), state.version);
-    state.opened = true;
   }
 
   private async refreshDiagnosticsNow(): Promise<void> {
@@ -452,7 +404,6 @@ export class VizslaLabElement extends LitElement {
         if (!state) {
           continue;
         }
-        this.openDocument(state);
         this.client.didSave(uri);
       }
 
@@ -461,7 +412,6 @@ export class VizslaLabElement extends LitElement {
         if (!state || !isSourceFile(state.file.path)) {
           continue;
         }
-        this.openDocument(state);
         const report = await this.client.request("textDocument/diagnostic", {
           textDocument: { uri },
           previousResultId: null,
@@ -491,7 +441,6 @@ export class VizslaLabElement extends LitElement {
       return;
     }
     const nextScenario = cloneScenario(scenario);
-    this.disposeLanguageFeatures();
     this.client?.dispose();
     this.client = undefined;
     this.clientGeneration += 1;
@@ -522,11 +471,6 @@ export class VizslaLabElement extends LitElement {
     this.requestUpdate();
   }
 
-  private disposeLanguageFeatures(): void {
-    this.providerDisposables.forEach((disposable) => disposable.dispose());
-    this.providerDisposables = [];
-  }
-
   private disposeEditorDisposables(): void {
     this.editorDisposables.forEach((disposable) => disposable.dispose());
     this.editorDisposables = [];
@@ -540,7 +484,6 @@ export class VizslaLabElement extends LitElement {
     this.activeUri = uri;
     this.editor.setModel(state.model);
     this.editor.updateOptions({ readOnly: state.file.editable === false });
-    this.openDocument(state);
     if (isSourceFile(state.file.path)) {
       this.scheduleDiagnostics(this.sourceUris());
     }

@@ -1,12 +1,15 @@
+import * as vscode from "vscode";
 import VizslaWorker from "../workers/vizsla-lsp.worker?worker&inline";
 import type { LspTraceEntry, WorkerRequest, WorkerResponse, WorkerStatus, WorkerWorkspaceFile } from "../types";
-import { browserClientCapabilities, browserInitializationOptions } from "../workers/lsp-browser-config";
+import { browserInitializationOptions } from "../workers/lsp-browser-config";
 import {
-  BrowserMessageReader,
-  BrowserMessageWriter,
-  createProtocolConnection,
-  type ProtocolConnection,
-} from "vscode-languageserver-protocol/browser.js";
+  BaseLanguageClient,
+  CloseAction,
+  ErrorAction,
+  type LanguageClientOptions,
+  type MessageTransports,
+} from "vscode-languageclient/browser.js";
+import { BrowserMessageReader, BrowserMessageWriter } from "vscode-languageserver-protocol/browser.js";
 
 const CLIENT_DISPOSED_MESSAGE = "Vizsla LSP client has been disposed.";
 
@@ -18,8 +21,8 @@ export class VizslaBrowserClient {
   private readonly worker = new VizslaWorker();
   private readonly wasmBaseUrl: string;
   private readonly rootUri: string;
-  private connection?: ProtocolConnection;
-  private initialized = false;
+  private languageClient?: VizslaLanguageClient;
+  private workerReadyStatus?: WorkerStatus;
   private disposed = false;
 
   onStatus: (status: WorkerStatus) => void = () => undefined;
@@ -38,29 +41,17 @@ export class VizslaBrowserClient {
 
   start(workspaceFiles: WorkerWorkspaceFile[]): void {
     const channel = new MessageChannel();
-    this.connection = createProtocolConnection(new BrowserMessageReader(channel.port1), new BrowserMessageWriter(channel.port1));
-    this.registerClientHandlers(this.connection);
-    this.connection.listen();
+    this.languageClient = new VizslaLanguageClient(this.clientOptions(), {
+      reader: new BrowserMessageReader(channel.port1),
+      writer: new BrowserMessageWriter(channel.port1),
+    });
     this.post({ kind: "boot", wasmBaseUrl: this.wasmBaseUrl, rootUri: this.rootUri, workspaceFiles, lspPort: channel.port2 }, [
       channel.port2,
     ]);
   }
 
   notify(method: string, params?: unknown): void {
-    void this.requireConnection().sendNotification(method, params);
-  }
-
-  didOpen(uri: string, languageId: string, text: string, version: number): void {
-    this.notify("textDocument/didOpen", {
-      textDocument: { uri, languageId, version, text },
-    });
-  }
-
-  didChange(uri: string, text: string, version: number): void {
-    this.notify("textDocument/didChange", {
-      textDocument: { uri, version },
-      contentChanges: [{ text }],
-    });
+    void this.requireLanguageClient().sendNotification(method, params);
   }
 
   writeFile(path: string, text: string): void {
@@ -77,7 +68,7 @@ export class VizslaBrowserClient {
     if (this.disposed) {
       return Promise.reject(new Error(CLIENT_DISPOSED_MESSAGE));
     }
-    return this.requireConnection().sendRequest(method, params);
+    return this.requireLanguageClient().sendRequest(method, params);
   }
 
   dispose(): void {
@@ -86,11 +77,7 @@ export class VizslaBrowserClient {
     }
     this.post({ kind: "stop" });
     this.disposed = true;
-    if (this.connection) {
-      void this.connection.sendRequest("shutdown").catch(() => undefined);
-      void this.connection.sendNotification("exit").catch(() => undefined);
-      this.connection.dispose();
-    }
+    void this.languageClient?.dispose(500).catch(() => undefined);
     this.worker.terminate();
   }
 
@@ -101,35 +88,54 @@ export class VizslaBrowserClient {
     this.worker.postMessage(message, transfer);
   }
 
-  private requireConnection(): ProtocolConnection {
-    if (!this.connection || this.disposed) {
+  private requireLanguageClient(): VizslaLanguageClient {
+    if (!this.languageClient || this.disposed) {
       throw new Error(CLIENT_DISPOSED_MESSAGE);
     }
-    return this.connection;
+    return this.languageClient;
   }
 
-  private registerClientHandlers(connection: ProtocolConnection): void {
-    connection.onRequest("workspace/diagnostic/refresh", () => {
-      this.onDiagnosticRefresh();
-      return null;
-    });
-    connection.onRequest("workspace/inlayHint/refresh", () => null);
-    connection.onRequest("workspace/codeLens/refresh", () => null);
-    connection.onRequest("client/registerCapability", () => null);
-    connection.onRequest("client/unregisterCapability", () => null);
-    connection.onRequest("workspace/configuration", () => []);
-    connection.onNotification("window/logMessage", (params: unknown) => {
-      const record = isRecord(params) ? params : {};
-      const message = typeof record.message === "string" ? record.message : "Vizsla language server log.";
-      this.onLog(message, logLevel(record.type));
-    });
+  private clientOptions(): LanguageClientOptions {
+    return {
+      documentSelector: [
+        { scheme: "file", language: "systemverilog" },
+        { scheme: "file", language: "verilog" },
+      ],
+      workspaceFolder: {
+        index: 0,
+        name: "workspace",
+        uri: vscode.Uri.parse(this.rootUri),
+      },
+      initializationOptions: browserInitializationOptions(),
+      diagnosticPullOptions: {
+        onChange: false,
+        onSave: false,
+        onTabs: false,
+      },
+      errorHandler: {
+        error: (error) => {
+          this.onLog(error.message, "error");
+          return { action: ErrorAction.Shutdown };
+        },
+        closed: () => ({ action: CloseAction.DoNotRestart }),
+      },
+      middleware: {
+        handleDiagnostics: (uri, diagnostics, next) => {
+          next(uri, diagnostics);
+        },
+        workspace: {
+          configuration: () => [],
+        },
+      },
+    };
   }
 
   private handleMessage(message: WorkerResponse): void {
     switch (message.kind) {
       case "status":
         if (message.status.ready) {
-          void this.initializeLanguageServer(message.status);
+          this.workerReadyStatus = message.status;
+          void this.startLanguageClient();
         } else {
           this.onStatus(message.status);
         }
@@ -143,42 +149,36 @@ export class VizslaBrowserClient {
     }
   }
 
-  private async initializeLanguageServer(workerStatus: WorkerStatus): Promise<void> {
-    if (this.disposed || this.initialized) {
+  private async startLanguageClient(): Promise<void> {
+    const languageClient = this.languageClient;
+    const workerReadyStatus = this.workerReadyStatus;
+    if (!languageClient || !workerReadyStatus || this.disposed || languageClient.isRunning()) {
       return;
     }
+
     try {
-      const initializeResult = await this.requireConnection().sendRequest("initialize", {
-        processId: null,
-        rootUri: this.rootUri,
-        capabilities: browserClientCapabilities(),
-        initializationOptions: browserInitializationOptions(),
-        trace: "off",
-      });
-      this.initialized = true;
-      this.onServerCapabilities(isRecord(initializeResult) ? (initializeResult.capabilities ?? null) : null);
-      await this.requireConnection().sendNotification("initialized", {});
-      this.onStatus(workerStatus);
+      await languageClient.start();
+      this.onServerCapabilities(languageClient.initializeResult?.capabilities ?? null);
+      this.onStatus(workerReadyStatus);
     } catch (error) {
       this.onStatus({
         engine: "unavailable",
         ready: false,
-        detail: error instanceof Error ? error.message : "Vizsla LSP initialization failed.",
+        detail: error instanceof Error ? error.message : "Vizsla language client failed to start.",
       });
     }
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
+class VizslaLanguageClient extends BaseLanguageClient {
+  constructor(
+    clientOptions: LanguageClientOptions,
+    private readonly messageTransports: MessageTransports,
+  ) {
+    super("vizsla", "Vizsla", clientOptions);
+  }
 
-function logLevel(type: unknown): "info" | "warn" | "error" {
-  if (type === 1) {
-    return "error";
+  protected createMessageTransports(): Promise<MessageTransports> {
+    return Promise.resolve(this.messageTransports);
   }
-  if (type === 2) {
-    return "warn";
-  }
-  return "info";
 }
