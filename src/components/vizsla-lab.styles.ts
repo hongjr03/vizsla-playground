@@ -162,7 +162,11 @@ export const vizslaLabStyles: CSSResultGroup = [
       display: flex;
       align-items: stretch;
       overflow-x: auto;
-      scrollbar-width: thin;
+      scrollbar-width: none;
+    }
+
+    .file-strip::-webkit-scrollbar {
+      display: none;
     }
 
     .file-strip button {
