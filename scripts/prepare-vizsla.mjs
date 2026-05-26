@@ -32,6 +32,8 @@ if (!ref) {
 
 const vendorRoot = resolve(repoRoot, ".vendor");
 const vizslaRoot = resolve(vendorRoot, "vizsla");
+const patchRoot = resolve(repoRoot, "patches", "vizsla");
+const patches = existsSync(patchRoot) ? gitOutput(["ls-files", "patches/vizsla/*.patch"]).split(/\r?\n/).filter(Boolean).sort() : [];
 
 if (!existsSync(vizslaRoot)) {
   git(["clone", "--filter=blob:none", "--no-recurse-submodules", repository, vizslaRoot]);
@@ -55,7 +57,11 @@ if (targetCommit && commitPresent(vizslaRoot, targetCommit)) {
 
 const currentHead = gitOutput(["-C", vizslaRoot, "rev-parse", "HEAD"]);
 if (currentHead !== targetCommit) {
-  const dirty = gitOutput(["-C", vizslaRoot, "status", "--porcelain"]);
+  let dirty = gitOutput(["-C", vizslaRoot, "status", "--porcelain"]);
+  if (dirty) {
+    reverseAppliedPatches(vizslaRoot, patches);
+    dirty = gitOutput(["-C", vizslaRoot, "status", "--porcelain"]);
+  }
   if (dirty) {
     throw new Error(`Vizsla checkout has local changes and is not at pinned commit '${targetCommit}'. Clean ${vizslaRoot} before switching refs.`);
   }
@@ -64,19 +70,30 @@ if (currentHead !== targetCommit) {
 
 console.log(`Using Vizsla commit ${targetCommit}.`);
 
-const patchRoot = resolve(repoRoot, "patches", "vizsla");
-if (existsSync(patchRoot)) {
-  const patches = gitOutput(["ls-files", "patches/vizsla/*.patch"]).split(/\r?\n/).filter(Boolean).sort();
-  for (const patch of patches) {
-    const patchPath = resolve(repoRoot, patch);
-    if (tryRun("git", ["-C", vizslaRoot, "apply", "--reverse", "--check", patchPath])) {
-      console.log(`Vizsla patch already applied: ${patch.split(/[\\/]/).pop()}`);
-      continue;
-    }
-    git(["-C", vizslaRoot, "apply", "--check", patchPath]);
-    git(["-C", vizslaRoot, "apply", patchPath]);
-    console.log(`Applied Vizsla patch: ${patch.split(/[\\/]/).pop()}`);
+for (const patch of patches) {
+  const patchPath = resolve(repoRoot, patch);
+  if (tryRun("git", ["-C", vizslaRoot, "apply", "--reverse", "--check", patchPath])) {
+    console.log(`Vizsla patch already applied: ${patchName(patch)}`);
+    continue;
   }
+  git(["-C", vizslaRoot, "apply", "--check", patchPath]);
+  git(["-C", vizslaRoot, "apply", patchPath]);
+  console.log(`Applied Vizsla patch: ${patchName(patch)}`);
 }
 
 run(process.execPath, [resolve(repoRoot, "scripts", "sync-vscode-assets.mjs"), "--vizsla-root", vizslaRoot]);
+
+function reverseAppliedPatches(root, patchFiles) {
+  for (const patch of [...patchFiles].reverse()) {
+    const patchPath = resolve(repoRoot, patch);
+    if (!tryRun("git", ["-C", root, "apply", "--reverse", "--check", patchPath])) {
+      continue;
+    }
+    git(["-C", root, "apply", "--reverse", patchPath]);
+    console.log(`Reversed applied Vizsla patch before switching refs: ${patchName(patch)}`);
+  }
+}
+
+function patchName(patch) {
+  return patch.split(/[\\/]/).pop();
+}
